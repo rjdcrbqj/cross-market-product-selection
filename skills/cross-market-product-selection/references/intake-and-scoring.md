@@ -54,7 +54,7 @@ Example:
 
 | Gate | Pass | Fail | Evidence | Missing result |
 | --- | --- | --- | --- | --- |
-| Product form | Cylindrical body with no side handle | T-shaped or pistol-grip body | Actual detail-page main image | Pending |
+| Product form | Matches the confirmed reference form | Shows an explicitly excluded form factor | Actual detail-page main image | Pending |
 
 Do not use title keywords alone for a visual gate. Do not score an item until every hard gate has a status.
 
