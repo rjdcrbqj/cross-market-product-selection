@@ -18,6 +18,16 @@ class SkillContractTests(unittest.TestCase):
         for name in ["需求确认与评分.md", "证据质量.md", "Excel输出规范.md"]:
             self.assertTrue((SKILL_DIR / "references" / name).is_file(), name)
 
+    def test_mode_references_encode_source_and_dedup_boundaries(self):
+        amazon = (SKILL_DIR / "references" / "亚马逊模式.md").read_text(encoding="utf-8")
+        source1688 = (SKILL_DIR / "references" / "1688模式.md").read_text(encoding="utf-8")
+        joint = (SKILL_DIR / "references" / "联合模式.md").read_text(encoding="utf-8")
+        serpapi = (SKILL_DIR / "references" / "SerpApi亚马逊备用方案.md").read_text(encoding="utf-8")
+        self.assertIn("跨站点重复占位", amazon)
+        self.assertIn("供应商主页", source1688)
+        self.assertIn("外观匹配", joint)
+        self.assertIn("不得用于核验 1688", serpapi)
+
     def test_every_local_markdown_link_resolves(self):
         markdown_files = [SKILL_DIR / "SKILL.md", *SKILL_DIR.joinpath("references").glob("*.md")]
         pattern = re.compile(r"\[[^\]]+\]\(([^)]+\.md)\)")

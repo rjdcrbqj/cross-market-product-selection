@@ -22,9 +22,9 @@ description: 用于 Amazon、1688 或两端联动的选品、竞品与货源匹�
 
 | 任务模式 | 必读资料 |
 | --- | --- |
-| Amazon | [amazon-mode.md](references/amazon-mode.md)；仅当 Sorftime 缺少所需数据时，再读取 [serpapi-amazon.md](references/serpapi-amazon.md) 作为 Amazon 备用说明 |
-| 1688 | [1688-mode.md](references/1688-mode.md) |
-| 两端联动 | [amazon-mode.md](references/amazon-mode.md)、[1688-mode.md](references/1688-mode.md)、[joint-mode.md](references/joint-mode.md)；仅 Amazon 侧在 Sorftime 缺数据时读取 [serpapi-amazon.md](references/serpapi-amazon.md) |
+| Amazon | [亚马逊模式](references/亚马逊模式.md)；仅当 Sorftime 未配置、不可用或缺少所需字段时，再读取 [SerpApi 亚马逊备用方案](references/SerpApi亚马逊备用方案.md) |
+| 1688 | [1688模式](references/1688模式.md) |
+| 两端联动 | [亚马逊模式](references/亚马逊模式.md)、[1688模式](references/1688模式.md)、[联合模式](references/联合模式.md)；仅 Amazon 侧在 Sorftime 未配置、不可用或缺数据时读取 [SerpApi 亚马逊备用方案](references/SerpApi亚马逊备用方案.md) |
 
 存在[通用选品数据库模板.xlsx](assets/通用选品数据库模板.xlsx)时，以其作为工作簿起点。
 
