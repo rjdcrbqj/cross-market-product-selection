@@ -1,0 +1,4 @@
+interface:
+  display_name: "跨市场选品与货源匹配"
+  short_description: "Amazon、1688 与跨平台货源的证据化选品工作流"
+  default_prompt: "使用 $cross-market-product-selection 按硬门槛、证据质量和评分规则完成选品，并输出可复核的 Excel。"
