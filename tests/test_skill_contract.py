@@ -31,6 +31,24 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("销量标准分 × 40% + 价格相似分 × 40% + 评价标准分 × 20%", text)
         self.assertIn("|实际价格 − 目标价格|", text)
 
+    def test_reviewed_core_contracts_are_documented(self):
+        core = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        intake = (SKILL_DIR / "references" / "需求确认与评分.md").read_text(encoding="utf-8")
+        evidence = (SKILL_DIR / "references" / "证据质量.md").read_text(encoding="utf-8")
+        excel = (SKILL_DIR / "references" / "Excel输出规范.md").read_text(encoding="utf-8")
+
+        self.assertIn("任一缺失或冲突时，转为待核验，不计算总评分并从严格结果移出", core)
+        for phrase in ["追加式决策日志", "仅在明确冲突时覆盖前序规则", "稳定商品 ID/配对 ID"]:
+            self.assertIn(phrase, intake)
+        for phrase in ["有序来源层级", "推断不得证明任何硬门槛", "字段权威性"]:
+            self.assertIn(phrase, evidence)
+        for phrase in [
+            "任务说明、亚马逊候选、1688候选、货源匹配、严格结果、待核验、淘汰记录",
+            "销量得分、评价数量、价格得分、稳定商品/配对 ID",
+            "孤立图片、跨行图片",
+        ]:
+            self.assertIn(phrase, excel)
+
 
 if __name__ == "__main__":
     unittest.main()
