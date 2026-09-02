@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from zipfile import ZipFile
 
 
@@ -160,11 +161,16 @@ def _write_ooxml_fixture(path):
     <xdr:to><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>5</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
     <xdr:pic><xdr:blipFill><a:blip r:embed="rIdNotMedia"/></xdr:blipFill></xdr:pic><xdr:clientData/>
   </xdr:twoCellAnchor>
+  <xdr:absoluteAnchor>
+    <xdr:pos x="0" y="0"/><xdr:ext cx="1" cy="1"/>
+    <xdr:pic><xdr:blipFill><a:blip r:embed="rIdAbsolute"/></xdr:blipFill></xdr:pic><xdr:clientData/>
+  </xdr:absoluteAnchor>
 </xdr:wsDr>"""
     drawing_rels = """<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdImage" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
   <Relationship Id="rIdNotMedia" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../embeddings/object.bin"/>
+  <Relationship Id="rIdAbsolute" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image2.png"/>
 </Relationships>"""
     with ZipFile(path, "w") as archive:
         archive.writestr("xl/workbook.xml", workbook)
@@ -177,6 +183,7 @@ def _write_ooxml_fixture(path):
         archive.writestr("xl/drawings/drawing1.xml", drawing)
         archive.writestr("xl/drawings/_rels/drawing1.xml.rels", drawing_rels)
         archive.writestr("xl/media/image1.png", b"fixture-image")
+        archive.writestr("xl/media/image2.png", b"absolute-anchor-image")
         archive.writestr("xl/embeddings/object.bin", b"not-an-image-part")
 
 
@@ -214,6 +221,35 @@ def _write_empty_valid_ooxml_fixture(path):
         archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
         for name, content in sheet_parts.items():
             archive.writestr(name, content)
+
+
+def _rewrite_zip(path, replacements=None, removed=()):
+    replacements = replacements or {}
+    with ZipFile(path) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist() if name not in removed}
+    parts.update(
+        {
+            name: content.encode("utf-8") if isinstance(content, str) else content
+            for name, content in replacements.items()
+        }
+    )
+    replacement_path = path.with_suffix(".replacement.xlsx")
+    with ZipFile(replacement_path, "w") as archive:
+        for name, content in parts.items():
+            archive.writestr(name, content)
+    replacement_path.replace(path)
+
+
+def _empty_fixture_sheet_part(sheet_name):
+    sheet_index = sorted(REQUIRED_SHEETS).index(sheet_name) + 1
+    return f"xl/worksheets/sheet{sheet_index}.xml"
+
+
+def _cli_result(workbook_path):
+    output = io.StringIO()
+    with redirect_stdout(output):
+        exit_code = validate_workbook.main([str(workbook_path)])
+    return exit_code, json.loads(output.getvalue()), output.getvalue()
 
 
 class WorkbookValidatorSemanticTests(unittest.TestCase):
@@ -311,7 +347,7 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
         )
         self.assertEqual(validate_workbook_model(model([amazon, generic], mode="Amazon")), [])
 
-    def test_1688_mode_requires_1688_image_and_supplier_evidence(self):
+    def test_1688_mode_accepts_1688_or_generic_image_but_rejects_amazon_image(self):
         values = strict_values(
             **{
                 "商品ID": "",
@@ -330,7 +366,7 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             frozenset({"1688商品图片"}),
             frozenset({2}),
         )
-        invalid = RowRecord(
+        generic = RowRecord(
             "严格结果",
             5,
             {**values, "1688商品ID": "1688-2"},
@@ -338,9 +374,17 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             frozenset({"商品图片"}),
             frozenset({2}),
         )
-        issues = validate_workbook_model(model([valid, invalid], mode="1688"))
+        invalid = RowRecord(
+            "严格结果",
+            6,
+            {**values, "1688商品ID": "1688-3"},
+            True,
+            frozenset({"Amazon商品图片"}),
+            frozenset({2}),
+        )
+        issues = validate_workbook_model(model([valid, generic, invalid], mode="1688"))
         image_rows = {issue.row for issue in issues if issue.code == "STRICT_IMAGE_MISSING"}
-        self.assertEqual(image_rows, {5})
+        self.assertEqual(image_rows, {6})
 
     def test_1688_mode_reports_missing_supplier_profile_and_customization_evidence(self):
         row = RowRecord(
@@ -376,6 +420,178 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
         codes = {issue.code for issue in validate_workbook_model(model([row], mode="联合"))}
         self.assertIn("STRICT_IMAGE_MISSING", codes)
         self.assertIn("STRICT_IMAGE_URL_MISSING", codes)
+
+    def test_non_finite_score_inputs_are_rejected(self):
+        for field_name, value in (
+            ("销量得分", float("nan")),
+            ("价格得分", float("inf")),
+            ("评价得分", float("-inf")),
+            ("总评分", float("nan")),
+        ):
+            with self.subTest(field_name=field_name):
+                row = RowRecord("严格结果", 4, strict_values(**{field_name: value}), True)
+                codes = {issue.code for issue in validate_workbook_model(model([row]))}
+                self.assertIn("SCORE_WEIGHTS_INVALID", codes)
+
+    def test_sorting_rejects_a_second_row_higher_by_exactly_point_zero_one(self):
+        rows = [
+            RowRecord(
+                "严格结果",
+                4,
+                strict_values(商品ID="A1", 销量得分=50, 价格得分=50, 评价得分=50, 总评分=50),
+                True,
+            ),
+            RowRecord(
+                "严格结果",
+                5,
+                strict_values(商品ID="A2", 销量得分=50.025, 价格得分=50, 评价得分=50, 总评分=50.01),
+                True,
+            ),
+        ]
+        codes = {issue.code for issue in validate_workbook_model(model(rows))}
+        self.assertIn("TOTAL_SCORE_NOT_DESCENDING", codes)
+
+    def test_joint_mode_does_not_accept_generic_image_as_amazon_side(self):
+        row = RowRecord(
+            "严格结果",
+            4,
+            strict_values(
+                **{
+                    "记录/配对ID": "PAIR-1",
+                    "Amazon主图链接": "https://example.com/amazon.jpg",
+                    "1688主图链接": "https://example.com/1688.jpg",
+                    "主图链接": "",
+                    "供应商主页": "https://supplier.example.com/store",
+                    "ODM/OEM/定制证据": "支持 OEM",
+                }
+            ),
+            True,
+            frozenset({"商品图片", "1688商品图片"}),
+            frozenset({1, 2}),
+        )
+        codes = {issue.code for issue in validate_workbook_model(model([row], mode="联合"))}
+        self.assertIn("STRICT_IMAGE_MISSING", codes)
+
+    def test_single_platform_mode_rejects_other_platform_image_and_link(self):
+        amazon_row = RowRecord(
+            "严格结果",
+            4,
+            strict_values(**{"Amazon ASIN": "B0TEST", "商品ID": "", "主图链接": "", "1688主图链接": "https://example.com/1688.jpg"}),
+            True,
+            frozenset({"1688商品图片"}),
+            frozenset({2}),
+        )
+        amazon_codes = {issue.code for issue in validate_workbook_model(model([amazon_row], mode="Amazon"))}
+        self.assertIn("STRICT_IMAGE_MISSING", amazon_codes)
+        self.assertIn("STRICT_IMAGE_URL_MISSING", amazon_codes)
+
+        source_row = RowRecord(
+            "严格结果",
+            4,
+            strict_values(
+                **{
+                    "1688商品ID": "1688-1",
+                    "商品ID": "",
+                    "主图链接": "",
+                    "Amazon主图链接": "https://example.com/amazon.jpg",
+                    "供应商主页": "https://supplier.example.com/store",
+                    "ODM/OEM/定制证据": "支持定制",
+                }
+            ),
+            True,
+            frozenset({"Amazon商品图片"}),
+            frozenset({2}),
+        )
+        source_codes = {issue.code for issue in validate_workbook_model(model([source_row], mode="1688"))}
+        self.assertIn("STRICT_IMAGE_MISSING", source_codes)
+        self.assertIn("STRICT_IMAGE_URL_MISSING", source_codes)
+
+    def test_main_image_link_must_be_http_url_with_host(self):
+        for bad_url in ("not-a-url", "https:///missing-host", "ftp://example.com/a.jpg"):
+            with self.subTest(bad_url=bad_url):
+                row = RowRecord("严格结果", 4, strict_values(主图链接=bad_url), True)
+                codes = {issue.code for issue in validate_workbook_model(model([row]))}
+                self.assertIn("STRICT_IMAGE_URL_MISSING", codes)
+
+    def test_supplier_profile_must_be_http_url_with_host(self):
+        for bad_url in ("supplier page", "https:///missing-host", "ftp://supplier.example.com/store"):
+            with self.subTest(bad_url=bad_url):
+                row = RowRecord(
+                    "严格结果",
+                    4,
+                    strict_values(
+                        **{
+                            "1688商品ID": "1688-1",
+                            "商品ID": "",
+                            "1688主图链接": "https://example.com/1688.jpg",
+                            "主图链接": "",
+                            "供应商主页": bad_url,
+                            "ODM/OEM/定制证据": "支持来图定制",
+                        }
+                    ),
+                    True,
+                    frozenset({"1688商品图片"}),
+                    frozenset({2}),
+                )
+                codes = {issue.code for issue in validate_workbook_model(model([row], mode="1688"))}
+                self.assertIn("SUPPLIER_PROFILE_MISSING", codes)
+
+    def test_negative_or_placeholder_customization_evidence_is_rejected(self):
+        rejected_values = ("", "无", "否", "不支持", "无证据", "待核验", "未知", "-", "N/A", "no", "false")
+        for evidence in rejected_values:
+            with self.subTest(evidence=evidence):
+                row = RowRecord(
+                    "严格结果",
+                    4,
+                    strict_values(
+                        **{
+                            "1688商品ID": "1688-1",
+                            "商品ID": "",
+                            "1688主图链接": "https://example.com/1688.jpg",
+                            "主图链接": "",
+                            "供应商主页": "https://supplier.example.com/store",
+                            "ODM/OEM/定制证据": evidence,
+                        }
+                    ),
+                    True,
+                    frozenset({"1688商品图片"}),
+                    frozenset({2}),
+                )
+                codes = {issue.code for issue in validate_workbook_model(model([row], mode="1688"))}
+                self.assertIn("ODM_EVIDENCE_MISSING", codes)
+
+        positive = RowRecord(
+            "严格结果",
+            4,
+            strict_values(
+                **{
+                    "1688商品ID": "1688-1",
+                    "商品ID": "",
+                    "1688主图链接": "https://example.com/1688.jpg",
+                    "主图链接": "",
+                    "供应商主页": "https://supplier.example.com/store",
+                    "ODM/OEM/定制证据": "https://evidence.example.com/customization",
+                }
+            ),
+            True,
+            frozenset({"1688商品图片"}),
+            frozenset({2}),
+        )
+        codes = {issue.code for issue in validate_workbook_model(model([positive], mode="1688"))}
+        self.assertNotIn("ODM_EVIDENCE_MISSING", codes)
+
+    def test_total_validation_calls_shared_scoring_function_with_inputs(self):
+        row = RowRecord(
+            "严格结果",
+            4,
+            strict_values(销量得分=11, 价格得分=22, 评价得分=33, 总评分=73.21),
+            True,
+        )
+        with patch.object(validate_workbook, "total_score", return_value=73.21) as shared_total_score:
+            issues = validate_workbook_model(model([row]))
+
+        self.assertEqual(issues, [])
+        shared_total_score.assert_called_once_with(11.0, 22.0, 33.0)
 
 
 class WorkbookExtractorTests(unittest.TestCase):
@@ -426,6 +642,101 @@ class WorkbookExtractorTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("SHEET_MISSING", {issue["code"] for issue in payload["issues"]})
         self.assertIn("缺少必需工作表", output.getvalue())
+
+    def test_declared_sheets_require_valid_workbook_relationships_and_existing_parts(self):
+        cases = ("missing relationships", "missing r:id", "unknown r:id", "wrong relationship type", "missing worksheet part")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary_directory:
+                workbook_path = Path(temporary_directory) / "broken.xlsx"
+                _write_empty_valid_ooxml_fixture(workbook_path)
+                if case == "missing relationships":
+                    _rewrite_zip(workbook_path, removed={"xl/_rels/workbook.xml.rels"})
+                elif case in {"missing r:id", "unknown r:id"}:
+                    with ZipFile(workbook_path) as archive:
+                        workbook_xml = archive.read("xl/workbook.xml").decode("utf-8")
+                    replacement = "" if case == "missing r:id" else ' r:id="unknownRelationship"'
+                    workbook_xml = workbook_xml.replace(' r:id="rId1"', replacement, 1)
+                    _rewrite_zip(workbook_path, {"xl/workbook.xml": workbook_xml})
+                elif case == "wrong relationship type":
+                    with ZipFile(workbook_path) as archive:
+                        relationships_xml = archive.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+                    relationships_xml = relationships_xml.replace("/relationships/worksheet", "/relationships/chartsheet", 1)
+                    _rewrite_zip(workbook_path, {"xl/_rels/workbook.xml.rels": relationships_xml})
+                else:
+                    _rewrite_zip(workbook_path, removed={"xl/worksheets/sheet1.xml"})
+
+                with self.assertRaises((KeyError, ValueError)):
+                    validate_workbook.extract_workbook_model(workbook_path)
+
+    def test_nonempty_sheet_without_exact_status_header_is_read_error(self):
+        invalid_sheets = {
+            "status instruction title": """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+  <row r="1"><c r="A1" t="inlineStr"><is><t>状态填写说明</t></is></c></row>
+  <row r="2"><c r="A2" t="inlineStr"><is><t>严格合格</t></is></c></row>
+</sheetData></worksheet>""",
+            "all english header": """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+  <row r="1"><c r="A1" t="inlineStr"><is><t>status</t></is></c><c r="B1" t="inlineStr"><is><t>product id</t></is></c></row>
+</sheetData></worksheet>""",
+        }
+        for case, sheet_xml in invalid_sheets.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary_directory:
+                workbook_path = Path(temporary_directory) / "bad-header.xlsx"
+                _write_empty_valid_ooxml_fixture(workbook_path)
+                _rewrite_zip(workbook_path, {_empty_fixture_sheet_part("严格结果"): sheet_xml})
+
+                exit_code, payload, _ = _cli_result(workbook_path)
+
+                self.assertEqual(exit_code, 1)
+                self.assertEqual({issue["code"] for issue in payload["issues"]}, {"WORKBOOK_READ_ERROR"})
+
+    def test_completely_empty_worksheet_is_allowed(self):
+        empty_sheet = """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workbook_path = Path(temporary_directory) / "empty-sheet.xlsx"
+            _write_empty_valid_ooxml_fixture(workbook_path)
+            _rewrite_zip(workbook_path, {_empty_fixture_sheet_part("严格结果"): empty_sheet})
+
+            exit_code, payload, _ = _cli_result(workbook_path)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload, {"ok": True, "issues": []})
+
+    def test_cells_without_references_use_their_reasonable_sequence(self):
+        sheet_without_cell_references = """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+  <row r="1"><c t="inlineStr"><is><t>状态</t></is></c><c t="inlineStr"><is><t>商品ID</t></is></c></row>
+  <row r="2"><c t="inlineStr"><is><t>待核验</t></is></c><c t="inlineStr"><is><t>NO-REF-1</t></is></c></row>
+</sheetData></worksheet>"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workbook_path = Path(temporary_directory) / "no-cell-reference.xlsx"
+            _write_empty_valid_ooxml_fixture(workbook_path)
+            _rewrite_zip(workbook_path, {_empty_fixture_sheet_part("严格结果"): sheet_without_cell_references})
+
+            extracted = validate_workbook.extract_workbook_model(workbook_path)
+
+        strict_rows = [row for row in extracted.rows if row.sheet == "严格结果"]
+        self.assertEqual(extracted.headers["严格结果"], ["状态", "商品ID"])
+        self.assertEqual(strict_rows[0].values, {"状态": "待核验", "商品ID": "NO-REF-1"})
+
+    def test_cli_structures_missing_relationships_missing_file_and_corrupt_zip_as_read_errors(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            missing_relationships = temporary_path / "missing-relationships.xlsx"
+            _write_empty_valid_ooxml_fixture(missing_relationships)
+            _rewrite_zip(missing_relationships, removed={"xl/_rels/workbook.xml.rels"})
+            corrupt = temporary_path / "corrupt.xlsx"
+            corrupt.write_bytes(b"not a ZIP archive")
+            missing = temporary_path / "does-not-exist.xlsx"
+
+            for workbook_path in (missing_relationships, corrupt, missing):
+                with self.subTest(workbook_path=workbook_path.name):
+                    exit_code, payload, _ = _cli_result(workbook_path)
+                    self.assertEqual(exit_code, 1)
+                    self.assertFalse(payload["ok"])
+                    self.assertEqual({issue["code"] for issue in payload["issues"]}, {"WORKBOOK_READ_ERROR"})
 
 
 if __name__ == "__main__":

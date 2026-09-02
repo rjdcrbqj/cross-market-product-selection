@@ -1,11 +1,13 @@
 import argparse
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import posixpath
 import re
 import sys
 from typing import Any
+from urllib.parse import urlparse
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
@@ -121,54 +123,112 @@ def _image_headers(row: RowRecord) -> set[str]:
     return {_normalize_header(header) for header in row.image_headers if not _blank(header)}
 
 
-def _has_amazon_image(row: RowRecord) -> bool:
-    headers = _image_headers(row)
-    generic = {"商品图片", "候选图片", "候选主图", "主图", "图片"}
-    return any(("amazon" in header or "亚马逊" in header) and "图" in header for header in headers) or bool(
-        headers & generic
+def _is_amazon_header(header: str) -> bool:
+    return "amazon" in header or "亚马逊" in header
+
+
+def _is_1688_header(header: str) -> bool:
+    return "1688" in header
+
+
+def _is_generic_image_header(header: str) -> bool:
+    return (
+        "图" in header
+        and not _is_amazon_header(header)
+        and not _is_1688_header(header)
+        and any(term in header for term in ("商品", "候选", "主图", "图片"))
     )
 
 
-def _has_1688_image(row: RowRecord) -> bool:
-    return any("1688" in header and "图" in header for header in _image_headers(row))
+def _has_amazon_image(row: RowRecord, allow_generic: bool) -> bool:
+    headers = _image_headers(row)
+    return any(_is_amazon_header(header) and not _is_1688_header(header) and "图" in header for header in headers) or (
+        allow_generic and any(_is_generic_image_header(header) for header in headers)
+    )
+
+
+def _has_1688_image(row: RowRecord, allow_generic: bool) -> bool:
+    headers = _image_headers(row)
+    return any(_is_1688_header(header) and not _is_amazon_header(header) and "图" in header for header in headers) or (
+        allow_generic and any(_is_generic_image_header(header) for header in headers)
+    )
+
+
+def _valid_http_url(value: Any) -> bool:
+    if _blank(value):
+        return False
+    try:
+        parsed = urlparse(str(value).strip())
+        return parsed.scheme.casefold() in {"http", "https"} and bool(parsed.hostname)
+    except ValueError:
+        return False
+
+
+def _is_main_image_link_header(header: str) -> bool:
+    return "主图" in header and ("链接" in header or "url" in header)
 
 
 def _has_specific_main_image_url(row: RowRecord, side: str) -> bool:
     for key, value in row.values.items():
         normalized = _normalize_header(key)
-        if side in normalized and "主图" in normalized and ("链接" in normalized or "url" in normalized):
-            if not _blank(value):
-                return True
+        if side == "amazon":
+            belongs_to_side = _is_amazon_header(normalized) and not _is_1688_header(normalized)
+        else:
+            belongs_to_side = _is_1688_header(normalized) and not _is_amazon_header(normalized)
+        if belongs_to_side and _is_main_image_link_header(normalized) and _valid_http_url(value):
+            return True
     return False
 
 
 def _has_generic_main_image_url(row: RowRecord) -> bool:
     for key, value in row.values.items():
         normalized = _normalize_header(key)
-        if "主图" in normalized and ("链接" in normalized or "url" in normalized) and not _blank(value):
+        if (
+            not _is_amazon_header(normalized)
+            and not _is_1688_header(normalized)
+            and _is_main_image_link_header(normalized)
+            and _valid_http_url(value)
+        ):
             return True
     return False
 
 
-def _has_supplier_profile(row: RowRecord) -> bool:
-    return not _blank(
-        _first_value(
-            row.values,
-            (
-                "供应商主页",
-                "供应商主页链接",
-                "供应商店铺链接",
-                "供应商URL",
-                "1688供应商主页",
-            ),
-        )
+def _has_any_main_image_url(row: RowRecord) -> bool:
+    return any(
+        _is_main_image_link_header(_normalize_header(key)) and _valid_http_url(value)
+        for key, value in row.values.items()
     )
+
+
+def _has_supplier_profile(row: RowRecord) -> bool:
+    value = _first_value(
+        row.values,
+        (
+            "供应商主页",
+            "供应商主页链接",
+            "供应商店铺链接",
+            "供应商URL",
+            "1688供应商主页",
+        ),
+    )
+    return _valid_http_url(value)
 
 
 def _has_odm_evidence(row: RowRecord) -> bool:
     for key, value in row.values.items():
         normalized = _normalize_header(key)
-        if any(term in normalized for term in ("odm", "oem", "定制")) and not _blank(value):
+        if not any(term in normalized for term in ("odm", "oem", "定制")) or _blank(value):
+            continue
+        if _valid_http_url(value):
+            return True
+        evidence = _normalize_header(str(value))
+        if evidence in {"空", "无", "否", "不支持", "无证据", "待核验", "未知", "-", "n/a", "na", "no", "false", "none", "null"}:
+            continue
+        if evidence.startswith(("不支持", "无证据", "暂无", "未提供", "不可", "不具备", "待核验", "未知")):
+            continue
+        if "://" in evidence or evidence.startswith("www."):
+            continue
+        if any(term in evidence for term in ("支持", "具备", "提供", "接受", "可定制", "能定制", "有证据", "已验证", "已核验", "可做", "承接")):
             return True
     return False
 
@@ -176,24 +236,24 @@ def _has_odm_evidence(row: RowRecord) -> bool:
 def _validate_images_and_links(row: RowRecord, mode: str | None) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     if mode == "joint":
-        if not _has_amazon_image(row) or not _has_1688_image(row):
+        if not _has_amazon_image(row, allow_generic=False) or not _has_1688_image(row, allow_generic=False):
             issues.append(_issue("STRICT_IMAGE_MISSING", "联合严格行必须同时嵌入 Amazon 与 1688 两侧图片", row))
         if not _has_specific_main_image_url(row, "amazon") or not _has_specific_main_image_url(row, "1688"):
             issues.append(_issue("STRICT_IMAGE_URL_MISSING", "联合严格行必须同时保留 Amazon 与 1688 两侧主图链接", row))
     elif mode == "amazon":
-        if not _has_amazon_image(row):
+        if not _has_amazon_image(row, allow_generic=True):
             issues.append(_issue("STRICT_IMAGE_MISSING", "Amazon 严格行缺少 Amazon 或候选通用图片列中的嵌图", row))
-        if not _has_generic_main_image_url(row):
+        if not _has_specific_main_image_url(row, "amazon") and not _has_generic_main_image_url(row):
             issues.append(_issue("STRICT_IMAGE_URL_MISSING", "Amazon 严格行缺少主图链接", row))
     elif mode == "1688":
-        if not _has_1688_image(row):
+        if not _has_1688_image(row, allow_generic=True):
             issues.append(_issue("STRICT_IMAGE_MISSING", "1688 严格行缺少 1688 图片列中的嵌图", row))
         if not _has_specific_main_image_url(row, "1688") and not _has_generic_main_image_url(row):
             issues.append(_issue("STRICT_IMAGE_URL_MISSING", "1688 严格行缺少主图链接", row))
     else:
         if not row.image_embedded:
             issues.append(_issue("STRICT_IMAGE_MISSING", "严格行缺少嵌入图片", row))
-        if not _has_generic_main_image_url(row):
+        if not _has_any_main_image_url(row):
             issues.append(_issue("STRICT_IMAGE_URL_MISSING", "严格行缺少主图链接", row))
     return issues
 
@@ -222,6 +282,8 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
         scores = [_number(row.values.get(field_name)) for field_name in REQUIRED_SCORE_FIELDS]
         if any(score is None for score in scores):
             issues.append(_issue("STRICT_SCORE_MISSING", "严格行缺少有效的评分输入或总评分", row))
+        elif not all(math.isfinite(score) for score in scores):
+            issues.append(_issue("SCORE_WEIGHTS_INVALID", "评分输入和总评分必须是有限数值", row))
         else:
             sales, price, rating, recorded_total = scores
             try:
@@ -247,7 +309,7 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
                 issues.append(_issue("ODM_EVIDENCE_MISSING", "1688 严格行缺少 ODM、OEM 或定制证据", row))
 
     for (previous_row, previous_score), (row, score) in zip(ordered_scores, ordered_scores[1:]):
-        if score > previous_score + 0.01:
+        if score > previous_score:
             issues.append(
                 _issue(
                     "TOTAL_SCORE_NOT_DESCENDING",
@@ -402,7 +464,7 @@ def _drawing_anchors(archive: ZipFile, sheet_part: str, sheet_root: ElementTree.
 
 def _find_header_row(rows: dict[int, dict[int, Any]]) -> int | None:
     for row_number in sorted(rows):
-        if any("状态" in str(value) for value in rows[row_number].values() if not _blank(value)):
+        if any(_normalize_header(str(value)) == "状态" for value in rows[row_number].values() if not _blank(value)):
             return row_number
     return None
 
@@ -414,11 +476,13 @@ def _extract_sheet(
     shared_strings: list[str],
 ) -> tuple[list[str], list[RowRecord]]:
     if sheet_part not in archive.namelist():
-        return [], []
+        raise ValueError(f"工作表部件不存在：{sheet_name}")
     sheet_root = ElementTree.fromstring(archive.read(sheet_part))
     cells_by_row = _sheet_cells(sheet_root, shared_strings)
     header_row = _find_header_row(cells_by_row)
     if header_row is None:
+        if any(not _blank(value) for cells in cells_by_row.values() for value in cells.values()):
+            raise ValueError(f"工作表“{sheet_name}”非空但找不到规范的“状态”表头")
         return [], []
     header_cells = cells_by_row[header_row]
     if not header_cells:
@@ -473,6 +537,8 @@ def extract_workbook_model(path: str | Path) -> WorkbookModel:
     with ZipFile(workbook_path) as archive:
         workbook_part = "xl/workbook.xml"
         workbook_root = ElementTree.fromstring(archive.read(workbook_part))
+        if _relationship_part(workbook_part) not in archive.namelist():
+            raise ValueError("缺少工作簿关系文件")
         workbook_relationships = _relationships(archive, workbook_part)
         shared_strings = _shared_strings(archive)
         sheets: set[str] = set()
@@ -484,9 +550,15 @@ def extract_workbook_model(path: str | Path) -> WorkbookModel:
                 continue
             sheets.add(sheet_name)
             relationship_id = sheet_element.get(f"{{{OFFICE_REL_NS}}}id")
+            if not relationship_id:
+                raise ValueError(f"工作表“{sheet_name}”缺少关系 ID")
             relationship = workbook_relationships.get(relationship_id or "")
-            if relationship is None or not relationship[1].endswith("/worksheet"):
-                continue
+            if relationship is None:
+                raise ValueError(f"工作表“{sheet_name}”引用未知关系：{relationship_id}")
+            if not relationship[1].endswith("/worksheet"):
+                raise ValueError(f"工作表“{sheet_name}”关系类型不是 worksheet")
+            if relationship[0] not in archive.namelist():
+                raise ValueError(f"工作表“{sheet_name}”目标部件不存在：{relationship[0]}")
             sheet_headers, sheet_records = _extract_sheet(
                 archive,
                 sheet_name,
