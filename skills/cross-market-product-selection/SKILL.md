@@ -1,131 +1,65 @@
 ---
 name: cross-market-product-selection
-description: Use when selecting products, analyzing Amazon competitors or opportunities, sourcing products or suppliers on 1688, matching Amazon demand to 1688 supply, or creating an evidence-based product-selection workbook.
+description: 用于 Amazon、1688 或两端联动的选品、竞品与货源匹配，以可追溯证据筛选产品并输出可复核的 Excel。
 ---
 
-# Cross-Market Product Selection
+# 跨市场选品与货源匹配
 
-Build a reproducible shortlist from traceable evidence. The workflow supports Amazon research, 1688 sourcing, and joint Amazon-to-1688 matching.
+以可追溯证据建立短名单。适用于 Amazon 市场研究、1688 货源筛选，以及两端商品匹配；默认用中文交付，ASIN、SKU、URL、API、FBA、Sorftime、SerpApi 等技术标识保留原文。
 
-## Non-negotiable rules
+## 不可妥协规则
 
-1. Apply hard gates before scoring or ranking.
-2. Never pad a requested Top-N. Return fewer items when fewer pass.
-3. Treat the actual product main image as a final hard gate when shape, form, color, bundle, or product identity matters.
-4. Keep missing values blank. Do not turn IDs, image-owner codes, search snippets, estimates, or guesses into facts.
-5. Preserve every user-confirmed constraint and exception in a decision log. Do not silently drop a retained item or relax a gate.
-6. Record source URLs and field-level evidence. A row without enough evidence is pending, not strict.
-7. Prefer Sorftime when it is available and configured. SerpApi is an Amazon-only fallback; it is not a 1688 product-detail source.
-8. Confirm paid-query scope before a bulk SerpApi run. Never expose an API key.
+1. 先确认外观与功能，再进行正式批量检索。
+2. 外观、功能、商品身份、价格允许范围和供应商资质是硬门槛，必须先于评分。
+3. 需要外观核验时，严格合格行必须同时有实际主图、主图链接、外观说明和嵌入 Excel 的图片；图片必须嵌入，不以标题或关键词替代。
+4. 只对严格合格且销量、价格、评价证据完整的候选计算总评分。
+5. 总评分固定为：销量标准分 × 40% + 价格相似分 × 40% + 评价标准分 × 20%。
+6. 不得凑 Top-N，不得用 0、编号、摘要或猜测填补缺失事实。
 
-## Route the task
+## 开始前确认与资料路由
 
-Always read [intake-and-scoring.md](references/intake-and-scoring.md) and [evidence-quality.md](references/evidence-quality.md). Then read the references for the requested mode:
+先读取[需求确认与评分](references/需求确认与评分.md)和[证据质量](references/证据质量.md)，将用户确认内容写入任务书与决策日志。只有在输出或校验工作簿时读取[Excel输出规范](references/Excel输出规范.md)。
 
-| Mode | Required references |
+| 任务模式 | 必读资料 |
 | --- | --- |
-| Amazon | [amazon-mode.md](references/amazon-mode.md); also [serpapi-amazon.md](references/serpapi-amazon.md) when Sorftime is unavailable or incomplete |
+| Amazon | [amazon-mode.md](references/amazon-mode.md)；仅当 Sorftime 缺少所需数据时，再读取 [serpapi-amazon.md](references/serpapi-amazon.md) 作为 Amazon 备用说明 |
 | 1688 | [1688-mode.md](references/1688-mode.md) |
-| Joint | [amazon-mode.md](references/amazon-mode.md), [1688-mode.md](references/1688-mode.md), and [joint-mode.md](references/joint-mode.md); add [serpapi-amazon.md](references/serpapi-amazon.md) only for the Amazon side |
+| 两端联动 | [amazon-mode.md](references/amazon-mode.md)、[1688-mode.md](references/1688-mode.md)、[joint-mode.md](references/joint-mode.md)；仅 Amazon 侧在 Sorftime 缺数据时读取 [serpapi-amazon.md](references/serpapi-amazon.md) |
 
-Read [excel-output.md](references/excel-output.md) whenever producing or validating a workbook. Use [通用选品数据库模板.xlsx](assets/通用选品数据库模板.xlsx) as the starting workbook when it exists.
+存在[通用选品数据库模板.xlsx](assets/通用选品数据库模板.xlsx)时，以其作为工作簿起点。
 
-## Workflow
+## 执行流程
 
-### 1. Freeze the brief
+### 1. 冻结任务书
 
-Before formal retrieval or a paid/bulk query, confirm:
+在正式检索、付费查询或批量采集前，确认目标市场、品类或使用场景、参考图片或商品、目标数量、外观与功能要求、排除项、价格口径、供应商要求、销量与评价口径、输出格式和检索范围。信息不足时，只询问会改变检索、资格判断、评分或交付的问题；可先做少量探索性检索，但必须标为探索，不得当作最终短名单。
 
-- mode, product category or use case, and target marketplace or region;
-- reference products and requested count;
-- hard gates and explicit exclusions;
-- soft metrics, directions, and weights totaling 100;
-- required fields, optional fields, and missing-value policy;
-- output format and destination;
-- for SerpApi, query depth and maximum calls.
+### 2. 规划并检索
 
-If the user has not supplied enough information, ask only the questions that change retrieval or qualification. Small exploratory retrieval is allowed before final confirmation, but label it exploratory and do not present it as the final shortlist.
+先写检索矩阵：核心词、同义词、形态词、功能词、排除词、市场变体和发现路径。1688 可结合关键词、以图搜款、相似款和同店路径；Amazon 结合关键词、类目或竞品路径，并回到商品详情页核验。逐项记录已尝试、不可用或跳过的原因，不得以单一搜索页宣称覆盖完整。
 
-Create a compact selection brief and decision log. Append changes instead of rewriting history. A later instruction overrides an earlier one only when the conflict is explicit.
+### 3. 规范化与证据台账
 
-### 2. Plan coverage before searching
+以 ASIN、1688 商品 ID、SKU 或规范 URL 等稳定身份去重，不得只按标题去重。每个事实保留原始值、标准值、来源类型、来源 URL、取得时间、置信度、冲突状态和转换说明；可靠来源缺失时保持空白。
 
-Write a retrieval matrix before collecting candidates. Include core keywords, synonyms, form-factor terms, feature terms, exclusions, marketplace or regional variants, and relevant discovery paths. For 1688, include keyword, image, similar-item, and same-store paths when available. For Amazon, include keyword variants, category or competitor paths, and product-detail verification.
+### 4. 先资格、后三态
 
-Mark each planned path as attempted, unavailable, or intentionally skipped with a reason. Do not claim complete coverage from one result page or one keyword.
+按商品主体、硬属性与合规、详情页身份和变体一致性、实际主图与目标外观及套装一致性、跨来源一致性的顺序判断。每项候选只能处于一种状态：
 
-### 3. Retrieve and normalize candidates
+- **严格合格**：所有硬门槛均有可靠证据且通过；
+- **待核验**：未发现明确失败，但至少一个硬门槛缺少或冲突的可靠证据；
+- **已淘汰**：至少一个硬门槛已有可靠证据明确失败。
 
-Use the mode-specific source order. Store raw values separately from normalized values. Deduplicate with stable product identity such as ASIN, 1688 item ID, or canonical URL; never deduplicate only by title.
+只有严格合格进入排序；待核验和已淘汰须分别保留具体缺失、冲突或失败原因。
 
-Maintain a field-level evidence ledger containing:
+### 5. 评分、导出与审计
 
-- raw value and normalized value;
-- source type, source URL, and retrieval time;
-- confidence and conflict status;
-- notes for transformations.
+严格合格且销量、价格、评价证据完整的候选，才按已确认的公式评分；保留原始值、标准分、权重、加权分和总分。两端联动时，市场机会、供货能力和匹配质量分开呈现，不用高需求掩盖供应风险。导出前核验主图、链接、评分公式、状态分表、筛选、冻结表头和图片行对应关系。
 
-If a preferred source lacks one field, use the approved fallback chain for that field. If no reliable source supplies it, leave it blank.
+## 停止与交付
 
-### 4. Qualify before scoring
+遇到登录、额度、计费或限流；付费查询范围未确认；硬门槛无法核验；主图与标题或属性冲突；身份或变体不稳定；或达到目标数量必须造数时，停止受影响路径并说明下一步。交付时报告要求数量与严格合格数量、未覆盖路径、缺失或冲突字段、已用付费调用和影响结论的限制。
 
-Evaluate in this order:
+## 最终自查
 
-1. target product body rather than an accessory, replacement part, or unrelated bundle;
-2. hard product and compliance attributes;
-3. stable detail-page identity and SKU or variation consistency;
-4. actual main-image agreement with the required form, color, and bundle;
-5. cross-source evidence consistency.
-
-Assign exactly one status:
-
-- **strict** — every hard gate is verified and passed;
-- **pending** — no verified failure, but at least one required gate lacks reliable evidence;
-- **rejected** — at least one hard gate is verified and failed.
-
-Only strict items enter the ranked shortlist. Keep pending and rejected items in audit sheets with specific reasons.
-
-### 5. Score and rank
-
-Score only strict items using the confirmed rubric. Preserve raw inputs, normalized sub-scores, weights, weighted components, and total formulas. Missing soft metrics remain blank and follow the confirmed missing-value rule; never convert absence into zero unless the user approved that rule.
-
-In joint mode, keep market opportunity, supply capability, and match quality as three separate scores. Do not hide a weak supplier match inside a high Amazon opportunity score.
-
-### 6. Deliver and audit
-
-Populate only the sheets relevant to the mode, while retaining the workbook schema. Use filterable tables, frozen headers when the workbook engine preserves them, clickable source links, formulas, and readable evidence columns. If the engine cannot persist frozen panes, retain active filters and disclose that limitation. Validate row counts, formulas, hyperlinks, image placement, strict/pending/rejected separation, and absence of padded rows.
-
-Report:
-
-- requested count versus strict count;
-- unattempted or unavailable coverage paths;
-- missing or conflicting fields;
-- paid-query calls used, if any;
-- material limitations that affect the decision.
-
-## Stop conditions
-
-Stop the affected path and explain the next safe option when:
-
-- authentication, quota, billing, or rate limits fail;
-- the paid-query budget is not confirmed;
-- a hard gate cannot be verified;
-- main-image evidence conflicts with title or attributes;
-- product identity changes across pages or variations;
-- the user requests a count that would require padding;
-- the output would require inventing a value.
-
-## Common rationalizations to reject
-
-| Rationalization | Required response |
-| --- | --- |
-| "The title sounds right, so the shape probably passes." | Inspect the actual main image; otherwise mark pending. |
-| "The user asked for 20, so fill all 20." | Return the strict count and explain the shortfall. |
-| "One search page is representative enough." | Complete the retrieval matrix or disclose skipped paths. |
-| "The interface returned a numeric owner ID, so use it as the store name." | Keep the store name blank until a reliable page supplies it. |
-| "Estimated sales are close enough." | Label a genuine estimate explicitly only if allowed; otherwise leave blank. |
-| "A previously retained item can be dropped during cleanup." | Preserve the decision log and request confirmation for a conflicting change. |
-
-## Final self-check
-
-Before presenting results, verify that hard gates precede scores, every strict row has evidence for every hard gate, requested Top-N was not padded, confirmed decisions remain applied, missing values remain honest, and each conclusion can be traced to a source.
+确认硬门槛先于评分；每个严格合格行能追溯全部硬门槛证据；不填充数量；空白仍代表未知；三种状态已分离；每张嵌入图片都对应同一行商品及保留的主图链接。
