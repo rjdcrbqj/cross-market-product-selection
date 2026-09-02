@@ -254,9 +254,13 @@ def _cli_result(workbook_path):
 
 
 class WorkbookValidatorSemanticTests(unittest.TestCase):
-    def test_valid_legacy_strict_row_passes(self):
+    def test_legacy_strict_row_without_mode_raw_evidence_or_identity_is_rejected(self):
         rows = [RowRecord("严格结果", 4, strict_values(), image_embedded=True)]
-        self.assertEqual(validate_workbook_model(model(rows)), [])
+        codes = {issue.code for issue in validate_workbook_model(model(rows))}
+        self.assertIn("MODE_MISSING", codes)
+        self.assertIn("AMAZON_IDENTITY_MISSING", codes)
+        self.assertIn("TRACEABILITY_MISSING", codes)
+        self.assertIn("STRICT_RAW_SCORE_MISSING", codes)
 
     def test_required_sheet_and_chinese_header_are_checked(self):
         missing_sheet_model = model()
@@ -357,7 +361,7 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
         self.assertIn("STRICT_ID_DUPLICATE", codes)
         self.assertIn("TOTAL_SCORE_NOT_DESCENDING", codes)
 
-    def test_identity_priority_uses_record_id_before_lower_priority_fields(self):
+    def test_record_ids_do_not_replace_required_business_identity(self):
         rows = [
             RowRecord(
                 "严格结果",
@@ -374,7 +378,7 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             RowRecord("严格结果", 6, {"状态": "", "商品ID": ""}, False),
         ]
         codes = {issue.code for issue in validate_workbook_model(model(rows))}
-        self.assertNotIn("STRICT_ID_DUPLICATE", codes)
+        self.assertIn("AMAZON_IDENTITY_MISSING", codes)
         self.assertNotIn("STRICT_IMAGE_MISSING", codes)
 
     def test_failed_gate_or_missing_score_cannot_be_strict(self):
@@ -411,7 +415,9 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             image_headers=frozenset({"商品图片"}),
             image_columns=frozenset({1}),
         )
-        self.assertEqual(validate_workbook_model(model([amazon, generic], mode="Amazon")), [])
+        issues = validate_workbook_model(model([amazon, generic], mode="Amazon"))
+        self.assertEqual({issue.row for issue in issues if issue.code == "STRICT_IMAGE_MISSING"}, set())
+        self.assertEqual({issue.row for issue in issues if issue.code == "STRICT_IMAGE_URL_MISSING"}, set())
 
     def test_1688_mode_accepts_1688_or_generic_image_but_rejects_amazon_image(self):
         values = strict_values(
@@ -629,6 +635,7 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             "false",
             "unknown",
             "pending",
+            "支持颜色选择",
         )
         for evidence in rejected_values:
             with self.subTest(evidence=evidence):
@@ -656,7 +663,6 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             "支持 ODM/OEM 定制",
             "可定制",
             "supports OEM customization",
-            "https://evidence.example.com/customization",
         ):
             with self.subTest(positive_evidence=evidence):
                 positive = RowRecord(
@@ -689,11 +695,24 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
         with patch.object(validate_workbook, "total_score", return_value=73.21) as shared_total_score:
             issues = validate_workbook_model(model([row]))
 
-        self.assertEqual(issues, [])
+        self.assertNotIn("SCORE_WEIGHTS_INVALID", {issue.code for issue in issues})
         shared_total_score.assert_called_once_with(11.0, 22.0, 33.0)
 
 
 class WorkbookExtractorTests(unittest.TestCase):
+    def test_fixed_capability_headers_do_not_infer_joint_mode_when_task_mode_is_blank(self):
+        template = (
+            Path(__file__).resolve().parents[1]
+            / "skills"
+            / "cross-market-product-selection"
+            / "assets"
+            / "通用选品数据库模板.xlsx"
+        )
+
+        extracted = validate_workbook.extract_workbook_model(template)
+
+        self.assertIsNone(extracted.mode)
+
     def test_extracts_relationship_mapped_sheets_cells_formula_cache_and_row_anchored_images(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workbook_path = Path(temporary_directory) / "fixture.xlsx"
@@ -703,7 +722,7 @@ class WorkbookExtractorTests(unittest.TestCase):
 
         self.assertEqual(extracted.sheets, {"严格结果", "待核验", "1688候选"})
         self.assertEqual(extracted.headers["严格结果"][0:4], ["状态", "Amazon ASIN", "商品图片", "主图链接"])
-        self.assertEqual(extracted.mode, "Amazon")
+        self.assertIsNone(extracted.mode)
         strict_rows = [row for row in extracted.rows if row.sheet == "严格结果"]
         self.assertEqual([row.row for row in strict_rows], [4, 5])
         self.assertEqual(strict_rows[0].values["Amazon ASIN"], "B0FIXTURE1")

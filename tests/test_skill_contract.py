@@ -34,7 +34,8 @@ class SkillContractTests(unittest.TestCase):
         serpapi = (SKILL_DIR / "references" / "SerpApi亚马逊备用方案.md").read_text(encoding="utf-8")
         self.assertIn("观测不得作为身份依据", amazon)
         self.assertIn("分站观测必须保留", amazon)
-        self.assertIn("无法确认为待核验配对", joint)
+        self.assertIn("图片相似但仍无法确认时，判为待核验配对", joint)
+        self.assertNotIn("无法确认为待核验配对", joint)
         self.assertIn("认证/额度不可重试", serpapi)
 
     def test_every_local_markdown_link_resolves(self):
@@ -49,6 +50,9 @@ class SkillContractTests(unittest.TestCase):
         text = (SKILL_DIR / "references" / "需求确认与评分.md").read_text(encoding="utf-8")
         self.assertIn("销量标准分 × 40% + 价格相似分 × 40% + 评价标准分 × 20%", text)
         self.assertIn("|实际价格 − 目标价格|", text)
+        self.assertIn("模式 + 站点 + 销量来源类型 + 销量统计周期", text)
+        self.assertIn("价格允许偏差只作为硬门槛", text)
+        self.assertIn("0 到任务书确认的平台满分", text)
 
     def test_reviewed_core_contracts_are_documented(self):
         core = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")

@@ -19,49 +19,60 @@ OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relations
 PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 SHEET_ORDER = ["任务说明", "亚马逊候选", "1688候选", "货源匹配", "严格结果", "待核验", "淘汰记录"]
-TABLE_REFS = {
-    "任务说明": "A3:C37",
-    "亚马逊候选": "A3:AJ4",
-    "1688候选": "A3:AO4",
-    "货源匹配": "A3:AR4",
-    "严格结果": "A3:AQ4",
-    "待核验": "A3:R4",
-    "淘汰记录": "A3:O4",
-}
-
 AMAZON_HEADERS = [
-    "状态", "排名", "商品图片", "ASIN", "站点", "品牌", "商品标题", "商品链接", "主图链接", "变体/SKU",
-    "产品本体门槛", "外观门槛", "功能门槛", "价格范围门槛", "详情身份门槛", "证据一致性门槛", "门槛原因",
-    "目标售价", "实际售价", "币种", "价格偏差率", "月销量", "销量统计周期", "评价星级", "评价数量",
-    "销量得分", "价格得分", "评价得分", "总评分", "来源类型", "证据链接", "检索路径", "获取时间", "置信度", "冲突说明", "决策日志引用",
+    "状态", "模式", "排名", "Amazon商品图片", "站点", "Amazon ASIN", "Amazon变体/SKU", "品牌", "商品标题",
+    "Amazon链接", "Amazon主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
+    "详情身份门槛", "证据一致性门槛", "门槛原因", "Amazon目标售价", "Amazon实际售价", "Amazon币种",
+    "Amazon销量", "Amazon销量来源类型", "Amazon销量统计周期", "Amazon评价星级", "Amazon评价数量",
+    "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分", "核心通过证据", "来源类型",
+    "来源链接", "检索路径", "获取时间", "置信度", "冲突说明", "决策日志引用",
 ]
 
 SUPPLY_HEADERS = [
-    "状态", "排名", "商品图片", "1688商品ID", "商品标题", "商品链接", "主图链接", "SKU/规格",
-    "产品本体门槛", "外观门槛", "功能门槛", "价格范围门槛", "供应商门槛", "证据一致性门槛", "门槛原因",
-    "目标成本", "实际单价", "币种", "价格偏差率", "采购数量档位", "MOQ", "近30天销量", "评价星级", "评价数量",
-    "销量得分", "价格得分", "评价得分", "总评分", "店铺名称", "供应商ID", "供应商主页", "生产能力证据",
-    "ODM/OEM/定制证据", "交期", "来源类型", "证据链接", "检索路径", "获取时间", "置信度", "冲突说明", "决策日志引用",
+    "状态", "模式", "排名", "1688商品图片", "1688商品ID", "1688 SKU/规格", "供应商ID", "店铺名称", "商品标题",
+    "1688链接", "供应商主页", "1688主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
+    "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "门槛原因", "目标成本",
+    "实际单价", "成本币种", "采购数量档位", "MOQ", "1688销量", "1688销量来源类型", "1688销量统计周期",
+    "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
+    "生产能力证据", "ODM/OEM/定制证据", "核心通过证据", "来源类型", "来源链接", "检索路径", "获取时间",
+    "置信度", "冲突说明", "决策日志引用",
 ]
 
 MATCH_HEADERS = [
-    "状态", "排名", "记录/配对ID", "Amazon商品图片", "1688商品图片", "Amazon ASIN", "1688商品ID",
-    "Amazon商品标题", "1688商品标题", "Amazon链接", "1688链接", "Amazon主图链接", "1688主图链接", "供应商主页",
-    "产品本体匹配", "外观匹配", "功能匹配", "规格匹配", "成本/MOQ匹配", "证据一致性门槛",
-    "外观匹配说明", "功能匹配说明", "目标成本", "实际单价", "币种", "价格偏差率", "Amazon月销量",
-    "Amazon评价星级", "Amazon评价数量", "销量得分", "价格得分", "评价得分", "匹配总分",
-    "生产能力证据", "ODM/OEM/定制证据", "核心匹配证据", "主要限制", "来源类型", "来源链接", "检索路径",
+    "状态", "模式", "排名", "记录/配对ID", "Amazon商品图片", "1688商品图片", "站点", "Amazon ASIN",
+    "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "Amazon商品标题", "1688商品标题",
+    "Amazon链接", "1688链接", "Amazon主图链接", "1688主图链接", "供应商主页", "产品本体门槛", "外观门槛",
+    "功能门槛", "价格/MOQ门槛", "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛",
+    "证据一致性门槛", "外观匹配说明", "功能匹配说明", "市场机会得分", "市场机会结论", "市场机会证据",
+    "供应能力得分", "供应能力结论", "供应能力证据", "匹配质量得分", "匹配质量结论", "匹配质量证据",
+    "最终配对得分", "生产能力证据", "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径",
     "获取时间", "置信度", "冲突说明", "决策日志引用",
 ]
 
 STRICT_HEADERS = [
-    "状态", "模式", "排名", "Amazon商品图片", "1688商品图片", "记录/配对ID", "站点", "Amazon ASIN", "1688商品ID",
-    "标题/配对说明", "Amazon链接", "1688链接", "供应商主页", "Amazon主图链接", "1688主图链接",
-    "外观门槛", "功能门槛", "证据一致性门槛", "外观匹配说明", "功能匹配说明", "目标价格", "实际价格", "币种",
-    "价格偏差率", "销量", "销量统计周期", "评价星级", "评价数量", "销量得分", "价格得分", "评价得分", "总评分",
-    "核心通过证据", "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径", "获取时间", "置信度",
-    "冲突说明", "决策日志引用", "输出时间",
+    "状态", "模式", "排名", "Amazon商品图片", "1688商品图片", "记录/配对ID", "站点", "Amazon ASIN",
+    "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "标题/配对说明", "Amazon链接", "1688链接",
+    "供应商主页", "Amazon主图链接", "1688主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
+    "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "外观匹配说明",
+    "功能匹配说明", "Amazon目标售价", "Amazon实际售价", "Amazon币种", "Amazon销量", "Amazon销量来源类型",
+    "Amazon销量统计周期", "Amazon评价星级", "Amazon评价数量", "Amazon销量得分", "Amazon价格得分", "Amazon评价得分",
+    "Amazon产品总评分", "目标成本", "实际单价", "成本币种", "1688销量", "1688销量来源类型", "1688销量统计周期",
+    "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
+    "市场机会得分", "市场机会结论", "市场机会证据", "供应能力得分", "供应能力结论", "供应能力证据",
+    "匹配质量得分", "匹配质量结论", "匹配质量证据", "最终配对得分", "核心通过证据", "生产能力证据",
+    "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径", "获取时间", "置信度", "冲突说明",
+    "决策日志引用", "输出时间",
 ]
+
+TABLE_REFS = {
+    "任务说明": "A3:C41",
+    "亚马逊候选": f"A3:{_column_name(len(AMAZON_HEADERS)) if '_column_name' in globals() else 'AL'}4",
+    "1688候选": "A3:AS4",
+    "货源匹配": "A3:AX4",
+    "严格结果": "A3:BW4",
+    "待核验": "A3:R4",
+    "淘汰记录": "A3:O4",
+}
 
 
 def _relationship_part(source_part):
@@ -266,37 +277,59 @@ class TemplateContractTests(unittest.TestCase):
         self.assertAlmostEqual(float(rows_by_field["评价权重"].values["确认值"]), 0.2)
         self.assertEqual(self.xlsx.formula("任务说明", "B30"), "SUM(B27:B29)")
         self.assertAlmostEqual(float(self.xlsx.value("任务说明", "B30")), 1.0)
+        for field in ("销量权重", "价格权重", "评价权重"):
+            self.assertIn("固定", rows_by_field[field].values["填写说明"])
+        for field in ("最终配对评分公式", "市场机会权重", "供应能力权重", "匹配质量权重"):
+            self.assertIn(field, rows_by_field)
+            self.assertTrue(rows_by_field[field].values["确认值"] in (None, ""))
         self.assertIn("Amazon 对目标售价", rows_by_field["价格评分规则"].values["确认值"])
         self.assertIn("1688 对目标成本", rows_by_field["价格评分规则"].values["确认值"])
         self.assertIn("双向接近", rows_by_field["价格评分规则"].values["确认值"])
         self.assertIn("转待核验", rows_by_field["证据不足处理"].values["确认值"])
         self.assertIn("凑数", rows_by_field["结果数量规则"].values["填写说明"])
 
-    def test_scoring_formulas_keep_missing_inputs_blank_and_reference_visible_assumptions(self):
-        formula_contracts = {
-            "亚马逊候选": ("$V$4:$V$103", "总评分"),
-            "1688候选": ("$V$4:$V$103", "总评分"),
-            "货源匹配": ("$AA$4:$AA$103", "匹配总分"),
-            "严格结果": ("$Y$4:$Y$103", "总评分"),
-        }
-        for sheet_name, (sales_range, total_header) in formula_contracts.items():
+    def test_scoring_formulas_enforce_strict_groups_domains_and_fixed_weights(self):
+        formula_contracts = (
+            ("亚马逊候选", "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分", ("模式", "站点", "Amazon销量来源类型", "Amazon销量统计周期")),
+            ("1688候选", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分", ("模式", "1688销量来源类型", "1688销量统计周期")),
+            ("严格结果", "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分", ("模式", "站点", "Amazon销量来源类型", "Amazon销量统计周期")),
+            ("严格结果", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分", ("模式", "1688销量来源类型", "1688销量统计周期")),
+        )
+        for sheet_name, sales_header, price_header, rating_header, total_header, group_headers in formula_contracts:
             headers = self.model.headers[sheet_name]
             formulas = {
                 header: self.xlsx.formula(sheet_name, f"{_column_name(headers.index(header) + 1)}4")
-                for header in ("销量得分", "价格得分", "评价得分", total_header)
+                for header in (sales_header, price_header, rating_header, total_header)
             }
-            with self.subTest(sheet=sheet_name):
-                self.assertIn(sales_range, formulas["销量得分"])
-                self.assertNotRegex(formulas["销量得分"], r"\$?[A-Z]+:\$?[A-Z]+")
-                for header in ("价格得分", "评价得分", total_header):
-                    self.assertIn("IF(", formulas[header])
-                    self.assertIn('""', formulas[header])
-                for task_cell in ("$B$20", "$B$32", "$B$33"):
-                    self.assertIn(f"'任务说明'!{task_cell}", formulas["价格得分"])
-                for task_cell in ("$B$31", "$B$33"):
-                    self.assertIn(f"'任务说明'!{task_cell}", formulas["评价得分"])
-                for task_cell in ("$B$27", "$B$28", "$B$29"):
-                    self.assertIn(f"'任务说明'!{task_cell}", formulas[total_header])
+            with self.subTest(sheet=sheet_name, total=total_header):
+                for formula in formulas.values():
+                    self.assertIn('$A4<>"严格合格"', formula)
+                    self.assertIn('""', formula)
+                    self.assertIn("ROUND(", formula)
+                self.assertIn("COUNTIFS(", formulas[sales_header])
+                self.assertIn("MINIFS(", formulas[sales_header])
+                self.assertIn("MAXIFS(", formulas[sales_header])
+                for group_header in group_headers:
+                    group_column = _column_name(headers.index(group_header) + 1)
+                    self.assertIn(f"${group_column}$4:${group_column}$103", formulas[sales_header])
+                self.assertIn("MAX(0,100*(1-ABS(", formulas[price_header])
+                self.assertNotIn("价格允许偏差", formulas[price_header])
+                self.assertIn("<0", formulas[rating_header])
+                self.assertIn(">", formulas[rating_header])
+                self.assertNotIn("MIN(", formulas[rating_header])
+                self.assertIn("*0.4", formulas[total_header])
+                self.assertIn("*0.2", formulas[total_header])
+
+    def test_joint_dimensions_are_separate_and_no_unconfirmed_final_formula_exists(self):
+        for sheet_name in ("货源匹配", "严格结果"):
+            headers = self.model.headers[sheet_name]
+            for prefix in ("市场机会", "供应能力", "匹配质量"):
+                self.assertIn(f"{prefix}得分", headers)
+                self.assertIn(f"{prefix}结论", headers)
+                self.assertIn(f"{prefix}证据", headers)
+            final_column = _column_name(headers.index("最终配对得分") + 1)
+            self.assertEqual(self.xlsx.formula(sheet_name, f"{final_column}4"), "")
+            self.assertEqual(self.xlsx.value(sheet_name, f"{final_column}4"), "")
 
 
 if __name__ == "__main__":

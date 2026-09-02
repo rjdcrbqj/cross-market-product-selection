@@ -1,14 +1,22 @@
 from collections.abc import Sequence
+import math
 
 
 def _round(value: float) -> float:
     return round(float(value), 2)
 
 
+def _finite_float(value: float, field_name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{field_name}必须是有限数值")
+    return number
+
+
 def sales_scores(values: Sequence[float]) -> list[float]:
     if not values:
         return []
-    normalized = [float(value) for value in values]
+    normalized = [_finite_float(value, "销量") for value in values]
     if any(value < 0 for value in normalized):
         raise ValueError("销量不能为负数")
     minimum = min(normalized)
@@ -19,8 +27,8 @@ def sales_scores(values: Sequence[float]) -> list[float]:
 
 
 def price_similarity_score(actual: float, target: float) -> float:
-    actual_value = float(actual)
-    target_value = float(target)
+    actual_value = _finite_float(actual, "实际价格")
+    target_value = _finite_float(target, "目标价格")
     if actual_value < 0:
         raise ValueError("实际价格不能为负数")
     if target_value <= 0:
@@ -30,15 +38,19 @@ def price_similarity_score(actual: float, target: float) -> float:
 
 
 def rating_score(rating: float, maximum: float = 5.0) -> float:
-    rating_value = float(rating)
-    maximum_value = float(maximum)
+    rating_value = _finite_float(rating, "评价分数")
+    maximum_value = _finite_float(maximum, "评价满分")
     if maximum_value <= 0 or rating_value < 0 or rating_value > maximum_value:
         raise ValueError("评价分数超出平台评分范围")
     return _round(rating_value / maximum_value * 100)
 
 
 def total_score(sales: float, price: float, rating: float) -> float:
-    values = [float(sales), float(price), float(rating)]
+    values = [
+        _finite_float(sales, "销量得分"),
+        _finite_float(price, "价格得分"),
+        _finite_float(rating, "评价得分"),
+    ]
     if any(value < 0 or value > 100 for value in values):
         raise ValueError("子分必须位于 0 到 100 之间")
     return _round(values[0] * 0.4 + values[1] * 0.4 + values[2] * 0.2)

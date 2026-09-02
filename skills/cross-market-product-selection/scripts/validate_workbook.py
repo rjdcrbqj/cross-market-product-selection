@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
-from scoring import total_score
+from scoring import price_similarity_score, rating_score, sales_scores, total_score
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class RowRecord:
     image_embedded: bool = False
     image_headers: frozenset[str] = field(default_factory=frozenset)
     image_columns: frozenset[int] = field(default_factory=frozenset)
+    formulas: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class WorkbookModel:
     headers: dict[str, list[str]]
     rows: list[RowRecord]
     mode: str | None = None
+    task_fields: dict[str, Any] = field(default_factory=dict)
 
 
 REQUIRED_SHEETS = {
@@ -56,6 +58,148 @@ EXPECTED_STATUS_BY_SHEET = {
     "严格结果": "严格合格",
     "待核验": "待核验",
     "淘汰记录": "已淘汰",
+}
+
+PLATFORM_WEIGHTS = {
+    "销量权重": 0.4,
+    "价格权重": 0.4,
+    "评价权重": 0.2,
+}
+
+# These are the precise v1.1 workbook capabilities.  A fixed seven-sheet
+# template contains both platforms; the selected task mode determines which
+# subset is required on a populated strict row.
+REQUIRED_HEADERS_BY_SHEET = {
+    "任务说明": {"字段", "确认值", "填写说明"},
+    "亚马逊候选": {
+        "状态",
+        "模式",
+        "Amazon商品图片",
+        "站点",
+        "Amazon ASIN",
+        "Amazon变体/SKU",
+        "Amazon链接",
+        "Amazon主图链接",
+        "Amazon目标售价",
+        "Amazon实际售价",
+        "Amazon销量",
+        "Amazon销量来源类型",
+        "Amazon销量统计周期",
+        "Amazon评价星级",
+        "Amazon评价数量",
+        "Amazon销量得分",
+        "Amazon价格得分",
+        "Amazon评价得分",
+        "Amazon产品总评分",
+    },
+    "1688候选": {
+        "状态",
+        "模式",
+        "1688商品图片",
+        "1688商品ID",
+        "1688 SKU/规格",
+        "供应商ID",
+        "1688链接",
+        "供应商主页",
+        "1688主图链接",
+        "目标成本",
+        "实际单价",
+        "1688销量",
+        "1688销量来源类型",
+        "1688销量统计周期",
+        "1688评价星级",
+        "1688评价数量",
+        "1688销量得分",
+        "1688价格得分",
+        "1688评价得分",
+        "1688产品总评分",
+        "生产能力证据",
+        "ODM/OEM/定制证据",
+    },
+    "货源匹配": {
+        "状态",
+        "模式",
+        "记录/配对ID",
+        "Amazon商品图片",
+        "1688商品图片",
+        "市场机会得分",
+        "市场机会结论",
+        "市场机会证据",
+        "供应能力得分",
+        "供应能力结论",
+        "供应能力证据",
+        "匹配质量得分",
+        "匹配质量结论",
+        "匹配质量证据",
+        "最终配对得分",
+    },
+    "严格结果": {
+        "状态",
+        "模式",
+        "排名",
+        "记录/配对ID",
+        "Amazon商品图片",
+        "1688商品图片",
+        "站点",
+        "Amazon ASIN",
+        "Amazon变体/SKU",
+        "1688商品ID",
+        "1688 SKU/规格",
+        "供应商ID",
+        "Amazon链接",
+        "1688链接",
+        "供应商主页",
+        "Amazon主图链接",
+        "1688主图链接",
+        "产品本体门槛",
+        "外观门槛",
+        "功能门槛",
+        "价格/MOQ门槛",
+        "详情身份门槛",
+        "供应商门槛",
+        "生产能力门槛",
+        "ODM/OEM/定制门槛",
+        "证据一致性门槛",
+        "Amazon目标售价",
+        "Amazon实际售价",
+        "Amazon销量",
+        "Amazon销量来源类型",
+        "Amazon销量统计周期",
+        "Amazon评价星级",
+        "Amazon评价数量",
+        "Amazon销量得分",
+        "Amazon价格得分",
+        "Amazon评价得分",
+        "Amazon产品总评分",
+        "目标成本",
+        "实际单价",
+        "1688销量",
+        "1688销量来源类型",
+        "1688销量统计周期",
+        "1688评价星级",
+        "1688评价数量",
+        "1688销量得分",
+        "1688价格得分",
+        "1688评价得分",
+        "1688产品总评分",
+        "市场机会得分",
+        "市场机会结论",
+        "市场机会证据",
+        "供应能力得分",
+        "供应能力结论",
+        "供应能力证据",
+        "匹配质量得分",
+        "匹配质量结论",
+        "匹配质量证据",
+        "最终配对得分",
+        "核心通过证据",
+        "生产能力证据",
+        "ODM/OEM/定制证据",
+        "来源链接",
+        "获取时间",
+    },
+    "待核验": {"状态", "模式", "记录/配对ID", "缺失或冲突门槛", "补证据动作"},
+    "淘汰记录": {"状态", "模式", "记录/配对ID", "失败门槛", "失败事实"},
 }
 
 
@@ -250,8 +394,6 @@ def _has_odm_evidence(row: RowRecord) -> bool:
         normalized = _normalize_header(key)
         if not any(term in normalized for term in ("odm", "oem", "定制")) or _blank(value):
             continue
-        if _valid_http_url(value):
-            return True
         evidence = _normalize_header(str(value))
         if evidence in {"空", "无", "否", "-", "n/a", "na", "null"}:
             continue
@@ -261,9 +403,13 @@ def _has_odm_evidence(row: RowRecord) -> bool:
             continue
         if "://" in evidence or evidence.startswith("www."):
             continue
-        if any(term in evidence for term in ("支持", "具备", "提供", "接受", "可定制", "能定制", "有证据", "已验证", "已核验", "可做", "承接")):
+        explicit_capabilities = ("odm", "oem", "开模", "打样", "贴牌", "来图", "结构改造", "定制")
+        if any(term in evidence for term in explicit_capabilities):
             return True
-        if re.search(r"(?<![a-z])(?:support|supports|supported|offer|offers|available|customizable)(?![a-z])", str(value).casefold()):
+        if re.search(
+            r"(?<![a-z])(?:odm|oem|private\s*label|custom(?:ization|isation|ize|ise|izable)?)(?![a-z])",
+            str(value).casefold(),
+        ):
             return True
     return False
 
@@ -293,6 +439,360 @@ def _validate_images_and_links(row: RowRecord, mode: str | None) -> list[Validat
     return issues
 
 
+def _finite_number(value: Any) -> float | None:
+    number = _number(value)
+    if number is None or not math.isfinite(number):
+        return None
+    return number
+
+
+def _task_value(task_fields: dict[str, Any], name: str) -> Any:
+    normalized_name = _normalize_header(name)
+    for key, value in task_fields.items():
+        if _normalize_header(key) == normalized_name:
+            return value
+    return None
+
+
+def _values_for(row: RowRecord, names: tuple[str, ...]) -> Any:
+    return _first_value(row.values, names)
+
+
+def _has_traceability(row: RowRecord, side: str) -> bool:
+    source_url = _values_for(row, ("来源链接", "证据链接", "证据URL", "来源URL"))
+    acquired_at = _values_for(row, ("获取时间", "采集时间"))
+    if not _valid_http_url(source_url) or _blank(acquired_at):
+        return False
+    if side == "amazon":
+        return _valid_http_url(_values_for(row, ("Amazon链接", "Amazon商品链接", "商品链接")))
+    return _valid_http_url(_values_for(row, ("1688链接", "1688商品链接", "商品链接"))) and _has_supplier_profile(row)
+
+
+def _has_production_evidence(row: RowRecord) -> bool:
+    value = _values_for(row, ("生产能力证据", "制造能力证据", "工厂能力证据"))
+    if _blank(value) or _valid_http_url(value) or _has_negative_evidence_context(value):
+        return False
+    text = _normalize_header(str(value))
+    # A shop name, a trade label, or a generic claim is not manufacturing
+    # evidence.  Require a concrete process/capacity/equipment fact and bind it
+    # to the supplier represented by this row.
+    manufacturing_terms = (
+        "生产线",
+        "生产设备",
+        "制造设备",
+        "车间",
+        "产能",
+        "注塑",
+        "冲压",
+        "组装",
+        "装配",
+        "模具",
+        "加工工艺",
+        "生产工艺",
+        "制造工艺",
+    )
+    if not any(term in text for term in manufacturing_terms):
+        return False
+    supplier_id = _values_for(row, ("供应商ID", "供应商主体ID"))
+    binding_terms = ("同一供应商", "该供应商", "供应商主体", "主体页面", "其工厂", "该工厂")
+    return any(term in text for term in binding_terms) or (
+        not _blank(supplier_id) and _normalize_header(str(supplier_id)) in text
+    )
+
+
+def _required_gates(mode: str) -> tuple[tuple[str, ...], ...]:
+    shared = (
+        ("产品本体门槛", "商品本体门槛"),
+        ("外观门槛",),
+        ("功能门槛",),
+        ("价格/MOQ门槛", "价格范围门槛", "价格/MOQ匹配"),
+        ("证据一致性门槛",),
+    )
+    amazon = (("详情身份门槛", "商品/详情身份门槛"),)
+    source = (
+        ("供应商门槛", "供应商身份门槛"),
+        ("生产能力门槛",),
+        ("ODM/OEM/定制门槛",),
+    )
+    if mode == "amazon":
+        return shared + amazon
+    if mode == "1688":
+        return shared + source
+    return shared + amazon + source
+
+
+def _validate_required_headers(model: WorkbookModel) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    contract_fields = {"模式", *PLATFORM_WEIGHTS}
+    normalized_task_fields = {_normalize_header(name) for name in model.task_fields}
+    if not any(_normalize_header(name) in normalized_task_fields for name in contract_fields):
+        return issues
+    for sheet, required in sorted(REQUIRED_HEADERS_BY_SHEET.items()):
+        headers = model.headers.get(sheet, [])
+        present = {str(header).strip() for header in headers if not _blank(header)}
+        for missing in sorted(required - present):
+            issues.append(
+                _issue(
+                    "REQUIRED_HEADER_MISSING",
+                    f"{sheet}缺少精确必需表头：{missing}",
+                    sheet=sheet,
+                )
+            )
+    return issues
+
+
+PLATFORM_FIELDS = {
+    "amazon": {
+        "target": ("Amazon目标售价", "目标售价", "目标价格"),
+        "actual": ("Amazon实际售价", "实际售价", "实际价格"),
+        "sales": ("Amazon销量", "销量"),
+        "source": ("Amazon销量来源类型", "销量来源类型"),
+        "period": ("Amazon销量统计周期", "销量统计周期"),
+        "rating": ("Amazon评价星级", "评价星级"),
+        "reviews": ("Amazon评价数量", "评价数量"),
+        "sales_score": ("Amazon销量得分", "销量得分"),
+        "price_score": ("Amazon价格得分", "价格得分"),
+        "rating_score": ("Amazon评价得分", "评价得分"),
+        "total": ("Amazon产品总评分", "Amazon总评分", "总评分"),
+    },
+    "1688": {
+        "target": ("目标成本", "目标价格"),
+        "actual": ("实际单价", "实际价格"),
+        "sales": ("1688销量", "近30天销量", "销量"),
+        "source": ("1688销量来源类型", "销量来源类型"),
+        "period": ("1688销量统计周期", "销量统计周期"),
+        "rating": ("1688评价星级", "评价星级"),
+        "reviews": ("1688评价数量", "评价数量"),
+        "sales_score": ("1688销量得分", "销量得分"),
+        "price_score": ("1688价格得分", "价格得分"),
+        "rating_score": ("1688评价得分", "评价得分"),
+        "total": ("1688产品总评分", "1688总评分", "总评分"),
+    },
+}
+
+
+def _platform_identity(row: RowRecord, side: str) -> tuple[str, ...] | None:
+    if side == "amazon":
+        raw = (
+            _values_for(row, ("站点", "Amazon站点")),
+            _values_for(row, ("Amazon ASIN", "ASIN")),
+            _values_for(row, ("Amazon变体/SKU", "变体/SKU", "SKU/规格")),
+        )
+    else:
+        raw = (_values_for(row, ("1688商品ID",)),)
+    if any(_blank(value) for value in raw):
+        return None
+    return tuple(_normalize_header(str(value)) for value in raw)
+
+
+def _supplier_identity(row: RowRecord) -> str | None:
+    value = _values_for(row, ("供应商ID", "供应商主体ID"))
+    return None if _blank(value) else _normalize_header(str(value))
+
+
+def _score_group(row: RowRecord, side: str) -> tuple[str, ...] | None:
+    fields = PLATFORM_FIELDS[side]
+    source = _values_for(row, fields["source"])
+    period = _values_for(row, fields["period"])
+    if _blank(source) or _blank(period):
+        return None
+    parts = [side, _normalize_header(str(source)), _normalize_header(str(period))]
+    if side == "amazon":
+        site = _values_for(row, ("站点", "Amazon站点"))
+        if _blank(site):
+            return None
+        parts.insert(1, _normalize_header(str(site)))
+    return tuple(parts)
+
+
+def _validate_platform_scores(
+    rows: list[RowRecord],
+    side: str,
+    rating_maximum: float,
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    fields = PLATFORM_FIELDS[side]
+    usable: list[tuple[RowRecord, dict[str, float], tuple[str, ...]]] = []
+    required_numeric = ("target", "actual", "sales", "rating", "reviews")
+    required_scores = ("sales_score", "price_score", "rating_score", "total")
+
+    for row in rows:
+        raw = {name: _finite_number(_values_for(row, fields[name])) for name in required_numeric}
+        recorded_raw = {name: _values_for(row, fields[name]) for name in required_scores}
+        recorded = {name: _finite_number(value) for name, value in recorded_raw.items()}
+        group = _score_group(row, side)
+        if any(_blank(value) for value in recorded_raw.values()):
+            issues.append(_issue("STRICT_SCORE_MISSING", "严格行缺少有限的子分或平台产品总评分", row))
+        elif any(value is None for value in recorded.values()):
+            issues.append(_issue("SCORE_WEIGHTS_INVALID", "子分和平台产品总评分必须是有限数值", row))
+        else:
+            try:
+                expected_recorded_total = total_score(
+                    recorded["sales_score"],
+                    recorded["price_score"],
+                    recorded["rating_score"],
+                )
+            except ValueError:
+                issues.append(_issue("SCORE_WEIGHTS_INVALID", "子分超出公共 4:4:2 评分函数允许范围", row))
+            else:
+                if abs(recorded["total"] - expected_recorded_total) > 0.01 + 1e-12:
+                    issues.append(_issue("SCORE_WEIGHTS_INVALID", "平台产品总评分不符合固定 4:4:2", row))
+        if any(value is None for value in raw.values()) or group is None:
+            issues.append(
+                _issue(
+                    "STRICT_RAW_SCORE_MISSING",
+                    f"严格行缺少可重算的{'Amazon' if side == 'amazon' else '1688'}原始评分证据或比较组字段",
+                    row,
+                )
+            )
+            continue
+        if any(value is None for value in recorded.values()):
+            continue
+        if raw["rating"] < 0 or raw["rating"] > rating_maximum:
+            issues.append(_issue("RATING_INPUT_INVALID", "评价星级必须处于 0 到任务确认满分之间", row))
+            continue
+        if raw["target"] <= 0 or raw["actual"] < 0 or raw["sales"] < 0 or raw["reviews"] < 0:
+            issues.append(_issue("STRICT_RAW_SCORE_INVALID", "销量、价格或评价数量原始值超出有效范围", row))
+            continue
+        usable.append((row, {**raw, **recorded}, group))
+
+    grouped: dict[tuple[str, ...], list[tuple[RowRecord, dict[str, float]]]] = {}
+    for row, values, group in usable:
+        grouped.setdefault(group, []).append((row, values))
+
+    for group_rows in grouped.values():
+        expected_sales_scores = sales_scores([values["sales"] for _, values in group_rows])
+        for (row, values), expected_sales in zip(group_rows, expected_sales_scores):
+            expected_price = price_similarity_score(values["actual"], values["target"])
+            expected_rating = rating_score(values["rating"], rating_maximum)
+            if abs(values["sales_score"] - expected_sales) > 0.01 + 1e-12:
+                issues.append(_issue("SALES_SCORE_INVALID", "销量得分未按同组严格行归一化重算", row))
+            if abs(values["price_score"] - expected_price) > 0.01 + 1e-12:
+                issues.append(_issue("PRICE_SCORE_INVALID", "价格得分不符合绝对偏差公式", row))
+            if abs(values["rating_score"] - expected_rating) > 0.01 + 1e-12:
+                issues.append(_issue("RATING_SCORE_INVALID", "评价得分不符合任务确认满分口径", row))
+    return issues
+
+
+def _ranking_values(row: RowRecord, mode: str) -> tuple[float, float, float, float, str] | None:
+    if mode == "joint":
+        total_names = ("最终配对得分",)
+        sales_names = PLATFORM_FIELDS["amazon"]["sales_score"]
+        review_names = PLATFORM_FIELDS["amazon"]["reviews"]
+        price_names = PLATFORM_FIELDS["1688"]["price_score"]
+        amazon_identity = _platform_identity(row, "amazon")
+        source_identity = _platform_identity(row, "1688")
+        business_id = "|".join((*(amazon_identity or ()), *(source_identity or ())))
+    else:
+        side = mode
+        fields = PLATFORM_FIELDS[side]
+        total_names = fields["total"]
+        sales_names = fields["sales_score"]
+        review_names = fields["reviews"]
+        price_names = fields["price_score"]
+        identity = _platform_identity(row, side)
+        business_id = "|".join(identity or ())
+    numbers = (
+        _finite_number(_values_for(row, total_names)),
+        _finite_number(_values_for(row, sales_names)),
+        _finite_number(_values_for(row, review_names)),
+        _finite_number(_values_for(row, price_names)),
+    )
+    if any(value is None for value in numbers):
+        return None
+    return numbers[0], numbers[1], numbers[2], numbers[3], business_id
+
+
+def _validate_rank(rows: list[RowRecord], mode: str) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    rankable: list[tuple[RowRecord, int, tuple[float, float, float, float, str]]] = []
+    for row in rows:
+        values = _ranking_values(row, mode)
+        if values is None:
+            continue
+        rank_value = _finite_number(_values_for(row, ("排名",)))
+        if rank_value is None or not rank_value.is_integer() or rank_value < 1:
+            issues.append(_issue("RANK_NOT_CONTINUOUS", "拥有已确认最终评分的严格行必须填写从 1 开始的连续整数排名", row))
+            continue
+        rankable.append((row, int(rank_value), values))
+    if not rankable:
+        return issues
+    ranks = sorted(rank for _, rank, _ in rankable)
+    if ranks != list(range(1, len(rankable) + 1)):
+        issues.append(_issue("RANK_NOT_CONTINUOUS", "严格排名必须从 1 连续且不重复"))
+    actual = [row for row, _, _ in sorted(rankable, key=lambda item: item[1])]
+    expected = [
+        row
+        for row, _, _ in sorted(
+            rankable,
+            key=lambda item: (
+                -item[2][0],
+                -item[2][1],
+                -item[2][2],
+                -item[2][3],
+                item[2][4],
+            ),
+        )
+    ]
+    if actual != expected:
+        first_wrong = next((row for row, expected_row in zip(actual, expected) if row != expected_row), actual[0])
+        issues.append(_issue("RANK_ORDER_INVALID", "排名未复现总分、销量分、评价数量、价格分、稳定业务 ID 的完整排序链", first_wrong))
+    return issues
+
+
+def _joint_score_confirmed(task_fields: dict[str, Any]) -> tuple[bool, tuple[float, float, float] | None]:
+    formula = _task_value(task_fields, "最终配对评分公式")
+    weights = tuple(
+        _finite_number(_task_value(task_fields, name))
+        for name in ("市场机会权重", "供应能力权重", "匹配质量权重")
+    )
+    if _blank(formula) or any(weight is None or weight < 0 for weight in weights):
+        return False, None
+    if abs(sum(weights) - 1.0) > 1e-9:
+        return False, None
+    return True, weights  # type: ignore[return-value]
+
+
+def _validate_formula_semantics(row: RowRecord, mode: str) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    sides = ("amazon", "1688") if mode == "joint" else (mode,)
+    for side in sides:
+        fields = PLATFORM_FIELDS[side]
+        formulas = {
+            kind: row.formulas.get(fields[kind][0], "")
+            for kind in ("sales_score", "price_score", "rating_score", "total")
+        }
+        if not any(formulas.values()):
+            continue
+        normalized = {kind: re.sub(r"\s+", "", formula).upper() for kind, formula in formulas.items()}
+        common_valid = all(
+            not formula
+            or ("IF(" in formula and "严格合格" in formula and '""' in formula and "ROUND(" in formula)
+            for formula in normalized.values()
+        )
+        sales_valid = not normalized["sales_score"] or all(
+            token in normalized["sales_score"] for token in ("COUNTIFS(", "MINIFS(", "MAXIFS(")
+        )
+        price_valid = not normalized["price_score"] or "MAX(0,100*(1-ABS(" in normalized["price_score"]
+        rating_valid = not normalized["rating_score"] or (
+            "<0" in normalized["rating_score"]
+            and ">" in normalized["rating_score"]
+            and "MIN(" not in normalized["rating_score"]
+        )
+        total_valid = not normalized["total"] or (
+            normalized["total"].count("*0.4") >= 2 and "*0.2" in normalized["total"]
+        )
+        if not all((common_valid, sales_valid, price_valid, rating_valid, total_valid)):
+            issues.append(
+                _issue(
+                    "FORMULA_SEMANTICS_INVALID",
+                    "评分公式必须保留严格状态守卫、同组销量范围、有效域检查与固定 4:4:2 语义",
+                    row,
+                )
+            )
+    return issues
+
+
 def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
@@ -302,6 +802,8 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     for sheet, headers in sorted(model.headers.items()):
         if headers and not any(re.search(r"[\u3400-\u9fff]", str(header)) for header in headers):
             issues.append(_issue("CHINESE_HEADER_MISSING", "数据表缺少中文表头", sheet=sheet))
+
+    issues.extend(_validate_required_headers(model))
 
     for row in model.rows:
         if row.sheet == "任务说明" or _row_is_blank(row):
@@ -326,55 +828,164 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
                 )
             )
 
-    mode = _normalized_mode(model.mode)
-    strict_rows = [row for row in model.rows if row.sheet == "严格结果" and not _row_is_blank(row)]
-    seen_identities: dict[tuple[str, str], RowRecord] = {}
-    ordered_scores: list[tuple[RowRecord, float]] = []
+    data_rows = [row for row in model.rows if row.sheet != "任务说明" and not _row_is_blank(row)]
+    strict_rows = [row for row in data_rows if row.sheet == "严格结果"]
+    task_mode_value = _task_value(model.task_fields, "模式") if model.task_fields else model.mode
+    mode = _normalized_mode(task_mode_value)
+    if data_rows and _blank(task_mode_value):
+        issues.append(_issue("MODE_MISSING", "任务说明必须确认模式后才能填写数据行", sheet="任务说明"))
+    elif data_rows and mode is None:
+        issues.append(_issue("MODE_INVALID", "任务说明模式必须是 Amazon、1688 或联合", sheet="任务说明"))
+    if mode is not None:
+        for row in data_rows:
+            if _normalized_mode(_values_for(row, ("模式",))) != mode:
+                issues.append(_issue("MODE_MISMATCH", "非空数据行模式必须与任务说明确认模式一致", row))
+
+    normalized_task_field_names = {_normalize_header(name) for name in model.task_fields}
+    if any(_normalize_header(name) in normalized_task_field_names for name in PLATFORM_WEIGHTS):
+        invalid_weights = False
+        for name, expected in PLATFORM_WEIGHTS.items():
+            actual = _finite_number(_task_value(model.task_fields, name))
+            if actual is None or abs(actual - expected) > 1e-12:
+                invalid_weights = True
+        if invalid_weights:
+            issues.append(_issue("FIXED_WEIGHTS_INVALID", "平台产品评分权重必须固定为 0.4/0.4/0.2", sheet="任务说明"))
+
+    effective_mode = mode or "amazon"
+    seen_record_ids: dict[str, RowRecord] = {}
+    seen_amazon: dict[tuple[str, ...], RowRecord] = {}
+    seen_products: dict[tuple[str, ...], RowRecord] = {}
+    seen_suppliers: dict[str, RowRecord] = {}
+    seen_pairs: dict[tuple[str, ...], RowRecord] = {}
+    seen_legacy_identities: dict[tuple[str, str], RowRecord] = {}
 
     for row in strict_rows:
         issues.extend(_validate_images_and_links(row, mode))
+        issues.extend(_validate_formula_semantics(row, effective_mode))
 
-        if not _gate_passed(row.values.get("外观门槛")) or not _gate_passed(row.values.get("功能门槛")):
-            issues.append(_issue("STRICT_GATE_NOT_PASSED", "严格行的外观门槛和功能门槛必须全部通过", row))
+        if any(not _gate_passed(_values_for(row, names)) for names in _required_gates(effective_mode)):
+            issues.append(_issue("STRICT_GATE_NOT_PASSED", "严格行的全部适用硬门槛必须明确通过", row))
 
-        scores = [_number(row.values.get(field_name)) for field_name in REQUIRED_SCORE_FIELDS]
-        if any(score is None for score in scores):
-            issues.append(_issue("STRICT_SCORE_MISSING", "严格行缺少有效的评分输入或总评分", row))
-        elif not all(math.isfinite(score) for score in scores):
-            issues.append(_issue("SCORE_WEIGHTS_INVALID", "评分输入和总评分必须是有限数值", row))
-        else:
-            sales, price, rating, recorded_total = scores
-            try:
-                expected_total = total_score(sales, price, rating)
-            except (TypeError, ValueError):
-                issues.append(_issue("SCORE_WEIGHTS_INVALID", "评分输入超出公共评分函数允许的范围", row))
+        record_id = _values_for(row, ("记录/配对ID",))
+        if not _blank(record_id):
+            normalized_record_id = _normalize_header(str(record_id))
+            if normalized_record_id in seen_record_ids:
+                issues.append(_issue("RECORD_ID_DUPLICATE", "记录/配对ID 必须唯一", row))
             else:
-                if abs(recorded_total - expected_total) > 0.01 + 1e-12:
-                    issues.append(_issue("SCORE_WEIGHTS_INVALID", "总评分不符合公共 4:4:2 评分函数", row))
-            ordered_scores.append((row, recorded_total))
+                seen_record_ids[normalized_record_id] = row
 
-        identity = _identity(row)
-        if identity is not None:
-            if identity in seen_identities:
-                issues.append(_issue("STRICT_ID_DUPLICATE", "严格结果中存在重复的稳定身份", row))
-            else:
-                seen_identities[identity] = row
+        if effective_mode in {"amazon", "joint"}:
+            amazon_identity = _platform_identity(row, "amazon")
+            if amazon_identity is None:
+                issues.append(_issue("AMAZON_IDENTITY_MISSING", "Amazon 严格行缺少站点、ASIN 或稳定变体身份", row))
+                legacy_identity = _identity(row)
+                if legacy_identity is not None:
+                    if legacy_identity in seen_legacy_identities:
+                        issues.append(_issue("STRICT_ID_DUPLICATE", "严格结果中存在重复的旧版稳定身份", row))
+                    else:
+                        seen_legacy_identities[legacy_identity] = row
+            elif effective_mode == "amazon":
+                if amazon_identity in seen_amazon:
+                    issues.append(_issue("AMAZON_BUSINESS_DUPLICATE", "Amazon 业务身份重复，记录 ID 不能遮蔽重复", row))
+                    issues.append(_issue("STRICT_ID_DUPLICATE", "严格结果中存在重复的 Amazon 业务身份", row))
+                else:
+                    seen_amazon[amazon_identity] = row
+            if not _has_traceability(row, "amazon"):
+                issues.append(_issue("TRACEABILITY_MISSING", "Amazon 严格行缺少商品链接、来源 URL 或获取时间", row))
 
-        if mode in {"1688", "joint"}:
+        if effective_mode in {"1688", "joint"}:
+            product_identity = _platform_identity(row, "1688")
+            supplier_identity = _supplier_identity(row)
+            if product_identity is None or supplier_identity is None:
+                issues.append(_issue("SUPPLY_IDENTITY_MISSING", "1688 严格行缺少商品或供应商主体身份", row))
+            if effective_mode == "1688" and product_identity is not None:
+                if product_identity in seen_products:
+                    issues.append(_issue("SUPPLY_PRODUCT_DUPLICATE", "1688 商品业务身份重复", row))
+                else:
+                    seen_products[product_identity] = row
+            if supplier_identity is not None:
+                if supplier_identity in seen_suppliers:
+                    issues.append(_issue("SUPPLIER_ID_DUPLICATE", "同一供应商主体在严格结果中重复占位", row))
+                else:
+                    seen_suppliers[supplier_identity] = row
+            if not _has_traceability(row, "1688"):
+                issues.append(_issue("TRACEABILITY_MISSING", "1688 严格行缺少商品链接、供应商主页、来源 URL 或获取时间", row))
             if not _has_supplier_profile(row):
                 issues.append(_issue("SUPPLIER_PROFILE_MISSING", "1688 严格行缺少可核验的供应商主页", row))
+            if not _has_production_evidence(row):
+                issues.append(_issue("PRODUCTION_EVIDENCE_MISSING", "1688 严格行缺少绑定同一供应商主体的具体制造能力证据", row))
             if not _has_odm_evidence(row):
                 issues.append(_issue("ODM_EVIDENCE_MISSING", "1688 严格行缺少 ODM、OEM 或定制证据", row))
 
-    for (previous_row, previous_score), (row, score) in zip(ordered_scores, ordered_scores[1:]):
-        if score > previous_score:
-            issues.append(
-                _issue(
-                    "TOTAL_SCORE_NOT_DESCENDING",
-                    f"总评分未按降序排列：第 {row.row} 行高于第 {previous_row.row} 行",
-                    row,
+            if effective_mode == "joint" and amazon_identity is not None and product_identity is not None:
+                pair_identity = (*amazon_identity, *product_identity)
+                if pair_identity in seen_pairs:
+                    issues.append(_issue("PAIR_BUSINESS_DUPLICATE", "联合配对业务身份重复", row))
+                else:
+                    seen_pairs[pair_identity] = row
+
+        if effective_mode == "joint":
+            for score_name, conclusion_name, evidence_name in (
+                ("市场机会得分", "市场机会结论", "市场机会证据"),
+                ("供应能力得分", "供应能力结论", "供应能力证据"),
+                ("匹配质量得分", "匹配质量结论", "匹配质量证据"),
+            ):
+                if (_blank(row.values.get(score_name)) and _blank(row.values.get(conclusion_name))) or _blank(
+                    row.values.get(evidence_name)
+                ):
+                    issues.append(_issue("JOINT_DIMENSION_MISSING", "联合严格行必须分别呈现市场、供应与匹配维度及证据", row))
+
+    rating_maximum = _finite_number(_task_value(model.task_fields, "评价满分星级")) if model.task_fields else 5.0
+    if rating_maximum is None or rating_maximum <= 0:
+        rating_maximum = 5.0
+    if effective_mode in {"amazon", "joint"}:
+        issues.extend(_validate_platform_scores(strict_rows, "amazon", rating_maximum))
+    if effective_mode in {"1688", "joint"}:
+        issues.extend(_validate_platform_scores(strict_rows, "1688", rating_maximum))
+
+    if mode == "joint":
+        confirmed, pair_weights = _joint_score_confirmed(model.task_fields)
+        if not confirmed:
+            for row in strict_rows:
+                if not _blank(row.values.get("最终配对得分")) or not _blank(row.values.get("排名")):
+                    issues.append(_issue("PAIR_SCORE_UNCONFIRMED", "未确认最终配对公式与三类权重时，最终配对得分和排名必须留空", row))
+        else:
+            assert pair_weights is not None
+            for row in strict_rows:
+                dimensions = tuple(
+                    _finite_number(row.values.get(name))
+                    for name in ("市场机会得分", "供应能力得分", "匹配质量得分")
                 )
-            )
+                recorded = _finite_number(row.values.get("最终配对得分"))
+                if any(value is None for value in dimensions) or recorded is None:
+                    issues.append(_issue("FINAL_PAIR_SCORE_MISSING", "已确认最终配对公式后必须提供三个维度分和最终配对得分", row))
+                    continue
+                expected = round(sum(value * weight for value, weight in zip(dimensions, pair_weights)), 2)
+                if abs(recorded - expected) > 0.01 + 1e-12:
+                    issues.append(_issue("FINAL_PAIR_SCORE_INVALID", "最终配对得分不符合任务说明确认公式与权重", row))
+            issues.extend(_validate_rank(strict_rows, "joint"))
+    elif effective_mode in {"amazon", "1688"}:
+        issues.extend(_validate_rank(strict_rows, effective_mode))
+
+    # Compatibility code retained for callers that already key dashboards on
+    # the older descending-order issue while the stronger rank issue is used by
+    # the v1.1 contract.
+    if effective_mode in {"amazon", "1688"}:
+        total_names = PLATFORM_FIELDS[effective_mode]["total"]
+        ordered_scores = [
+            (row, _finite_number(_values_for(row, total_names)))
+            for row in strict_rows
+        ]
+        ordered_scores = [(row, score) for row, score in ordered_scores if score is not None]
+        for (previous_row, previous_score), (row, score) in zip(ordered_scores, ordered_scores[1:]):
+            if score > previous_score:
+                issues.append(
+                    _issue(
+                        "TOTAL_SCORE_NOT_DESCENDING",
+                        f"总评分未按降序排列：第 {row.row} 行高于第 {previous_row.row} 行",
+                        row,
+                    )
+                )
 
     return issues
 
@@ -480,6 +1091,25 @@ def _sheet_cells(root: ElementTree.Element, shared_strings: list[str]) -> dict[i
     return rows
 
 
+def _sheet_formulas(root: ElementTree.Element) -> dict[int, dict[int, str]]:
+    """Return formula text without replacing the separately read cached value."""
+    rows: dict[int, dict[int, str]] = {}
+    for fallback_row, row_element in enumerate(root.findall(f".//{{{MAIN_NS}}}sheetData/{{{MAIN_NS}}}row"), start=1):
+        row_number = int(row_element.get("r", fallback_row))
+        formulas: dict[int, str] = {}
+        fallback_column = 0
+        for cell in row_element.findall(f"{{{MAIN_NS}}}c"):
+            reference = cell.get("r")
+            column = _column_index(reference) if reference else fallback_column
+            formula_element = cell.find(f"{{{MAIN_NS}}}f")
+            if formula_element is not None and formula_element.text:
+                formulas[column] = formula_element.text
+            fallback_column = column + 1
+        if formulas:
+            rows[row_number] = formulas
+    return rows
+
+
 def _drawing_anchors(archive: ZipFile, sheet_part: str, sheet_root: ElementTree.Element) -> dict[int, set[int]]:
     sheet_relationships = _relationships(archive, sheet_part)
     anchors: dict[int, set[int]] = {}
@@ -537,6 +1167,7 @@ def _extract_sheet(
         raise ValueError(f"工作表部件不存在：{sheet_name}")
     sheet_root = ElementTree.fromstring(archive.read(sheet_part))
     cells_by_row = _sheet_cells(sheet_root, shared_strings)
+    formulas_by_row = _sheet_formulas(sheet_root)
     header_anchor = "字段" if sheet_name == "任务说明" else "状态"
     header_row = _find_header_row(cells_by_row, header_anchor)
     if header_row is None:
@@ -557,6 +1188,11 @@ def _extract_sheet(
             for column, header in enumerate(headers)
             if header
         }
+        formulas = {
+            header: formulas_by_row.get(row_number, {}).get(column, "")
+            for column, header in enumerate(headers)
+            if header and formulas_by_row.get(row_number, {}).get(column)
+        }
         if not values or all(_blank(value) for value in values.values()):
             continue
         image_columns = frozenset(image_anchors.get(row_number, set()))
@@ -573,22 +1209,22 @@ def _extract_sheet(
                 image_embedded=bool(image_columns),
                 image_headers=image_headers,
                 image_columns=image_columns,
+                formulas=formulas,
             )
         )
     return headers, records
 
 
-def _infer_workbook_mode(headers: dict[str, list[str]]) -> str | None:
-    normalized_headers = {_normalize_header(header) for header in headers.get("严格结果", [])}
-    has_amazon = any("amazon" in header or "亚马逊" in header or "asin" in header for header in normalized_headers)
-    has_1688 = any("1688" in header for header in normalized_headers)
-    if has_amazon and has_1688:
-        return "联合"
-    if has_1688:
-        return "1688"
-    if has_amazon:
-        return "Amazon"
-    return None
+def _extract_task_fields(records: list[RowRecord]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for row in records:
+        if row.sheet != "任务说明":
+            continue
+        field_name = _first_value(row.values, ("字段",))
+        if _blank(field_name):
+            continue
+        fields[str(field_name).strip()] = _first_value(row.values, ("确认值", "确认内容"))
+    return fields
 
 
 def extract_workbook_model(path: str | Path) -> WorkbookModel:
@@ -627,11 +1263,13 @@ def extract_workbook_model(path: str | Path) -> WorkbookModel:
             if sheet_headers:
                 headers[sheet_name] = sheet_headers
             records.extend(sheet_records)
+    task_fields = _extract_task_fields(records)
     return WorkbookModel(
         sheets=sheets,
         headers=headers,
         rows=records,
-        mode=_infer_workbook_mode(headers),
+        mode=task_fields.get("模式"),
+        task_fields=task_fields,
     )
 
 

@@ -35,6 +35,31 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(rating_score(4.5), 90.0)
         self.assertEqual(total_score(100, 90, 80), 92.0)
 
+    def test_every_scoring_function_rejects_non_finite_inputs(self):
+        non_finite_values = (float("nan"), float("inf"), float("-inf"))
+        for value in non_finite_values:
+            with self.subTest(function="sales_scores", value=value):
+                with self.assertRaises(ValueError):
+                    sales_scores([100, value])
+            with self.subTest(function="price_similarity_score.actual", value=value):
+                with self.assertRaises(ValueError):
+                    price_similarity_score(value, 100)
+            with self.subTest(function="price_similarity_score.target", value=value):
+                with self.assertRaises(ValueError):
+                    price_similarity_score(100, value)
+            with self.subTest(function="rating_score.rating", value=value):
+                with self.assertRaises(ValueError):
+                    rating_score(value)
+            with self.subTest(function="rating_score.maximum", value=value):
+                with self.assertRaises(ValueError):
+                    rating_score(4.5, value)
+            for position in range(3):
+                scores = [80.0, 90.0, 100.0]
+                scores[position] = value
+                with self.subTest(function="total_score", position=position, value=value):
+                    with self.assertRaises(ValueError):
+                        total_score(*scores)
+
 
 if __name__ == "__main__":
     unittest.main()
