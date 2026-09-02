@@ -126,6 +126,30 @@ class SkillContractTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, text)
 
+    def test_excel_output_reference_keeps_urls_as_text_and_no_freeze_claim(self):
+        text = (SKILL_DIR / "references" / "Excel输出规范.md").read_text(encoding="utf-8")
+        core = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in [
+            "具有 host 的有效 http/https URL 文本",
+            "v1.1.0 不要求独立 XLSX hyperlink 对象",
+            "必须将实际主图嵌入 Excel",
+        ]:
+            self.assertIn(phrase, text)
+        self.assertNotIn("冻结表头", text)
+        self.assertNotIn("冻结表头", core)
+
+    def test_readme_and_release_preserve_install_directory_urls(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        release = (ROOT / "docs" / "releases" / "v1.1.0.md").read_text(encoding="utf-8")
+        install_urls = [
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.0.0/skills/cross-market-product-selection",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cross-market-product-selection",
+        ]
+        for text in [readme, release]:
+            for install_url in install_urls:
+                self.assertIn(install_url, text)
+
 
 if __name__ == "__main__":
     unittest.main()
