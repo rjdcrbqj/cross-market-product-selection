@@ -49,6 +49,32 @@ class RealTemplateIntegrationTests(unittest.TestCase):
                     expected_images = 2 if mode == "联合" else 1
                     self.assertEqual(len(strict[0].image_headers), expected_images)
 
+    def test_real_template_scenarios_preserve_platform_score_formulas(self):
+        amazon_score_fields = {
+            "Amazon销量得分",
+            "Amazon价格得分",
+            "Amazon评价得分",
+            "Amazon产品总评分",
+        }
+        supply_score_fields = {
+            "1688销量得分",
+            "1688价格得分",
+            "1688评价得分",
+            "1688产品总评分",
+        }
+        expected_formula_fields = {
+            "Amazon": amazon_score_fields,
+            "1688": supply_score_fields,
+            "联合": amazon_score_fields | supply_score_fields,
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            for mode, expected_fields in expected_formula_fields.items():
+                with self.subTest(mode=mode):
+                    workbook_path = self.create_scenario(temporary_directory, mode)
+                    model = extract_workbook_model(workbook_path)
+                    strict = next(row for row in model.rows if row.sheet == "严格结果")
+                    self.assertEqual(set(strict.formulas) & expected_fields, expected_fields)
+
     def test_real_committed_template_rejects_factory_and_image_counterexamples(self):
         cases = (
             ("1688", "odm-color", "ODM_EVIDENCE_MISSING"),

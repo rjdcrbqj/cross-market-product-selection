@@ -605,14 +605,24 @@ def _score_group(row: RowRecord, side: str) -> tuple[str, ...] | None:
     return tuple(parts)
 
 
+def _formula_for(row: RowRecord, names: tuple[str, ...]) -> str:
+    normalized = {_normalize_header(name): formula for name, formula in row.formulas.items()}
+    for name in names:
+        formula = normalized.get(_normalize_header(name), "")
+        if not _blank(formula):
+            return formula
+    return ""
+
+
 def _validate_platform_scores(
     rows: list[RowRecord],
     side: str,
     rating_maximum: float,
-) -> list[ValidationIssue]:
+) -> tuple[list[ValidationIssue], dict[tuple[int, str], dict[str, float]]]:
     issues: list[ValidationIssue] = []
+    expected_by_row: dict[tuple[int, str], dict[str, float]] = {}
     fields = PLATFORM_FIELDS[side]
-    usable: list[tuple[RowRecord, dict[str, float], tuple[str, ...]]] = []
+    usable: list[tuple[RowRecord, dict[str, float], dict[str, float | None], tuple[str, ...]]] = []
     required_numeric = ("target", "actual", "sales", "rating", "reviews")
     required_scores = ("sales_score", "price_score", "rating_score", "total")
 
@@ -620,12 +630,13 @@ def _validate_platform_scores(
         raw = {name: _finite_number(_values_for(row, fields[name])) for name in required_numeric}
         recorded_raw = {name: _values_for(row, fields[name]) for name in required_scores}
         recorded = {name: _finite_number(value) for name, value in recorded_raw.items()}
+        formulas = {name: _formula_for(row, fields[name]) for name in required_scores}
         group = _score_group(row, side)
-        if any(_blank(value) for value in recorded_raw.values()):
+        if any(_blank(recorded_raw[name]) and not formulas[name] for name in required_scores):
             issues.append(_issue("STRICT_SCORE_MISSING", "严格行缺少有限的子分或平台产品总评分", row))
-        elif any(value is None for value in recorded.values()):
+        if any(not _blank(recorded_raw[name]) and recorded[name] is None for name in required_scores):
             issues.append(_issue("SCORE_WEIGHTS_INVALID", "子分和平台产品总评分必须是有限数值", row))
-        else:
+        if all(value is not None for value in recorded.values()):
             try:
                 expected_recorded_total = total_score(
                     recorded["sales_score"],
@@ -646,68 +657,102 @@ def _validate_platform_scores(
                 )
             )
             continue
-        if any(value is None for value in recorded.values()):
-            continue
         if raw["rating"] < 0 or raw["rating"] > rating_maximum:
             issues.append(_issue("RATING_INPUT_INVALID", "评价星级必须处于 0 到任务确认满分之间", row))
             continue
         if raw["target"] <= 0 or raw["actual"] < 0 or raw["sales"] < 0 or raw["reviews"] < 0:
             issues.append(_issue("STRICT_RAW_SCORE_INVALID", "销量、价格或评价数量原始值超出有效范围", row))
             continue
-        usable.append((row, {**raw, **recorded}, group))
+        usable.append((row, raw, recorded, group))
 
-    grouped: dict[tuple[str, ...], list[tuple[RowRecord, dict[str, float]]]] = {}
-    for row, values, group in usable:
-        grouped.setdefault(group, []).append((row, values))
+    grouped: dict[
+        tuple[str, ...],
+        list[tuple[RowRecord, dict[str, float], dict[str, float | None]]],
+    ] = {}
+    for row, raw, recorded, group in usable:
+        grouped.setdefault(group, []).append((row, raw, recorded))
 
     for group_rows in grouped.values():
-        expected_sales_scores = sales_scores([values["sales"] for _, values in group_rows])
-        for (row, values), expected_sales in zip(group_rows, expected_sales_scores):
-            expected_price = price_similarity_score(values["actual"], values["target"])
-            expected_rating = rating_score(values["rating"], rating_maximum)
-            if abs(values["sales_score"] - expected_sales) > 0.01 + 1e-12:
+        expected_sales_scores = sales_scores([raw["sales"] for _, raw, _ in group_rows])
+        for (row, raw, recorded), expected_sales in zip(group_rows, expected_sales_scores):
+            expected_price = price_similarity_score(raw["actual"], raw["target"])
+            expected_rating = rating_score(raw["rating"], rating_maximum)
+            expected_total = total_score(expected_sales, expected_price, expected_rating)
+            expected = {
+                "sales_score": expected_sales,
+                "price_score": expected_price,
+                "rating_score": expected_rating,
+                "total": expected_total,
+            }
+            expected_by_row[(id(row), side)] = expected
+            if recorded["sales_score"] is not None and abs(recorded["sales_score"] - expected_sales) > 0.01 + 1e-12:
                 issues.append(_issue("SALES_SCORE_INVALID", "销量得分未按同组严格行归一化重算", row))
-            if abs(values["price_score"] - expected_price) > 0.01 + 1e-12:
+            if recorded["price_score"] is not None and abs(recorded["price_score"] - expected_price) > 0.01 + 1e-12:
                 issues.append(_issue("PRICE_SCORE_INVALID", "价格得分不符合绝对偏差公式", row))
-            if abs(values["rating_score"] - expected_rating) > 0.01 + 1e-12:
+            if recorded["rating_score"] is not None and abs(recorded["rating_score"] - expected_rating) > 0.01 + 1e-12:
                 issues.append(_issue("RATING_SCORE_INVALID", "评价得分不符合任务确认满分口径", row))
-    return issues
+            if recorded["total"] is not None and abs(recorded["total"] - expected_total) > 0.01 + 1e-12:
+                issues.append(_issue("SCORE_WEIGHTS_INVALID", "平台产品总评分与原始证据独立重算结果不一致", row))
+    return issues, expected_by_row
 
 
-def _ranking_values(row: RowRecord, mode: str) -> tuple[float, float, float, float, str] | None:
+def _expected_score(
+    expected_scores: dict[tuple[int, str], dict[str, float]],
+    row: RowRecord,
+    side: str,
+    kind: str,
+    fallback_names: tuple[str, ...],
+) -> float | None:
+    expected = expected_scores.get((id(row), side), {}).get(kind)
+    return expected if expected is not None else _finite_number(_values_for(row, fallback_names))
+
+
+def _ranking_values(
+    row: RowRecord,
+    mode: str,
+    expected_scores: dict[tuple[int, str], dict[str, float]],
+) -> tuple[float, float, float, float, str] | None:
     if mode == "joint":
-        total_names = ("最终配对得分",)
-        sales_names = PLATFORM_FIELDS["amazon"]["sales_score"]
         review_names = PLATFORM_FIELDS["amazon"]["reviews"]
-        price_names = PLATFORM_FIELDS["1688"]["price_score"]
         amazon_identity = _platform_identity(row, "amazon")
         source_identity = _platform_identity(row, "1688")
         business_id = "|".join((*(amazon_identity or ()), *(source_identity or ())))
+        total = _finite_number(_values_for(row, ("最终配对得分",)))
+        sales = _expected_score(
+            expected_scores, row, "amazon", "sales_score", PLATFORM_FIELDS["amazon"]["sales_score"]
+        )
+        price = _expected_score(
+            expected_scores, row, "1688", "price_score", PLATFORM_FIELDS["1688"]["price_score"]
+        )
     else:
         side = mode
         fields = PLATFORM_FIELDS[side]
-        total_names = fields["total"]
-        sales_names = fields["sales_score"]
         review_names = fields["reviews"]
-        price_names = fields["price_score"]
         identity = _platform_identity(row, side)
         business_id = "|".join(identity or ())
+        total = _expected_score(expected_scores, row, side, "total", fields["total"])
+        sales = _expected_score(expected_scores, row, side, "sales_score", fields["sales_score"])
+        price = _expected_score(expected_scores, row, side, "price_score", fields["price_score"])
     numbers = (
-        _finite_number(_values_for(row, total_names)),
-        _finite_number(_values_for(row, sales_names)),
+        total,
+        sales,
         _finite_number(_values_for(row, review_names)),
-        _finite_number(_values_for(row, price_names)),
+        price,
     )
     if any(value is None for value in numbers):
         return None
     return numbers[0], numbers[1], numbers[2], numbers[3], business_id
 
 
-def _validate_rank(rows: list[RowRecord], mode: str) -> list[ValidationIssue]:
+def _validate_rank(
+    rows: list[RowRecord],
+    mode: str,
+    expected_scores: dict[tuple[int, str], dict[str, float]],
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     rankable: list[tuple[RowRecord, int, tuple[float, float, float, float, str]]] = []
     for row in rows:
-        values = _ranking_values(row, mode)
+        values = _ranking_values(row, mode, expected_scores)
         if values is None:
             continue
         rank_value = _finite_number(_values_for(row, ("排名",)))
@@ -753,40 +798,153 @@ def _joint_score_confirmed(task_fields: dict[str, Any]) -> tuple[bool, tuple[flo
     return True, weights  # type: ignore[return-value]
 
 
-def _validate_formula_semantics(row: RowRecord, mode: str) -> list[ValidationIssue]:
+def _column_name(index: int) -> str:
+    value = index + 1
+    result = ""
+    while value > 0:
+        value -= 1
+        result = chr(ord("A") + value % 26) + result
+        value //= 26
+    return result
+
+
+def _header_for(headers: list[str], names: tuple[str, ...]) -> str | None:
+    by_normalized = {_normalize_header(header): header for header in headers if not _blank(header)}
+    for name in names:
+        header = by_normalized.get(_normalize_header(name))
+        if header is not None:
+            return header
+    return None
+
+
+def _task_rating_reference(model: WorkbookModel) -> str | None:
+    headers = model.headers.get("任务说明", [])
+    value_header = _header_for(headers, ("确认值", "确认内容"))
+    if value_header is None:
+        return None
+    value_column = _column_name(headers.index(value_header))
+    for task_row in model.rows:
+        if task_row.sheet != "任务说明":
+            continue
+        field_name = _values_for(task_row, ("字段",))
+        if not _blank(field_name) and _normalize_header(str(field_name)) == _normalize_header("评价满分星级"):
+            return f"'任务说明'!${value_column}${task_row.row}"
+    return None
+
+
+def _canonical_platform_formulas(
+    model: WorkbookModel,
+    row: RowRecord,
+    side: str,
+) -> dict[str, str] | None:
+    headers = model.headers.get(row.sheet, [])
+    fields = PLATFORM_FIELDS[side]
+    rating_reference = _task_rating_reference(model)
+    if not headers or rating_reference is None:
+        return None
+
+    def cell(names: tuple[str, ...], *, absolute_column: bool = False) -> str:
+        header = _header_for(headers, names)
+        if header is None:
+            raise ValueError
+        column = _column_name(headers.index(header))
+        return f"{'$' if absolute_column else ''}{column}{row.row}"
+
+    def column_range(names: tuple[str, ...]) -> str:
+        header = _header_for(headers, names)
+        if header is None:
+            raise ValueError
+        column = _column_name(headers.index(header))
+        return f"${column}$4:${column}$103"
+
+    try:
+        status = cell(("状态",), absolute_column=True)
+        mode = cell(("模式",))
+        sales = cell(fields["sales"])
+        source = cell(fields["source"])
+        period = cell(fields["period"])
+        target = cell(fields["target"])
+        actual = cell(fields["actual"])
+        rating = cell(fields["rating"])
+        sales_range = column_range(fields["sales"])
+        criteria: list[tuple[tuple[str, ...], str]] = [
+            (("状态",), '"严格合格"'),
+            (("模式",), mode),
+        ]
+        if side == "amazon":
+            criteria.append((("站点", "Amazon站点"), cell(("站点", "Amazon站点"))))
+        criteria.extend(((fields["source"], source), (fields["period"], period)))
+        criteria_arguments = ",".join(
+            part
+            for names, criterion in criteria
+            for part in (column_range(names), criterion)
+        )
+        count = f"COUNTIFS({criteria_arguments})"
+        minimum = f"MINIFS({sales_range},{criteria_arguments})"
+        maximum = f"MAXIFS({sales_range},{criteria_arguments})"
+        required_group_cells = [mode]
+        if side == "amazon":
+            required_group_cells.append(cell(("站点", "Amazon站点")))
+        required_group_cells.extend((source, period, sales))
+        sales_formula = (
+            f'IF(OR({status}<>"严格合格",'
+            f'{",".join(f"{value}=\"\"" for value in required_group_cells)}),"",'
+            f"ROUND(IF({count}<=1,100,IF({maximum}={minimum},100,"
+            f"({sales}-{minimum})/({maximum}-{minimum})*100)),2))"
+        )
+        price_formula = (
+            f'IF(OR({status}<>"严格合格",{target}="",{actual}="",{target}<=0,{actual}<0),"",'
+            f"ROUND(MAX(0,100*(1-ABS({actual}-{target})/{target})),2))"
+        )
+        rating_formula = (
+            f'IF(OR({status}<>"严格合格",{rating}="",{rating_reference}="",{rating}<0,'
+            f'{rating}>{rating_reference}),"",ROUND(100*{rating}/{rating_reference},2))'
+        )
+        sales_score = cell(fields["sales_score"])
+        price_score = cell(fields["price_score"])
+        rating_score = cell(fields["rating_score"])
+        total_formula = (
+            f'IF(OR({status}<>"严格合格",{sales_score}="",{price_score}="",{rating_score}=""),"",'
+            f"ROUND({sales_score}*0.4+{price_score}*0.4+{rating_score}*0.2,2))"
+        )
+    except ValueError:
+        return None
+    return {
+        "sales_score": sales_formula,
+        "price_score": price_formula,
+        "rating_score": rating_formula,
+        "total": total_formula,
+    }
+
+
+def _normalized_formula(formula: str) -> str:
+    return re.sub(r"\s+", "", formula).upper()
+
+
+def _validate_formula_semantics(
+    model: WorkbookModel,
+    row: RowRecord,
+    mode: str,
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     sides = ("amazon", "1688") if mode == "joint" else (mode,)
     for side in sides:
         fields = PLATFORM_FIELDS[side]
         formulas = {
-            kind: row.formulas.get(fields[kind][0], "")
+            kind: _formula_for(row, fields[kind])
             for kind in ("sales_score", "price_score", "rating_score", "total")
         }
         if not any(formulas.values()):
             continue
-        normalized = {kind: re.sub(r"\s+", "", formula).upper() for kind, formula in formulas.items()}
-        common_valid = all(
-            not formula
-            or ("IF(" in formula and "严格合格" in formula and '""' in formula and "ROUND(" in formula)
-            for formula in normalized.values()
-        )
-        sales_valid = not normalized["sales_score"] or all(
-            token in normalized["sales_score"] for token in ("COUNTIFS(", "MINIFS(", "MAXIFS(")
-        )
-        price_valid = not normalized["price_score"] or "MAX(0,100*(1-ABS(" in normalized["price_score"]
-        rating_valid = not normalized["rating_score"] or (
-            "<0" in normalized["rating_score"]
-            and ">" in normalized["rating_score"]
-            and "MIN(" not in normalized["rating_score"]
-        )
-        total_valid = not normalized["total"] or (
-            normalized["total"].count("*0.4") >= 2 and "*0.2" in normalized["total"]
-        )
-        if not all((common_valid, sales_valid, price_valid, rating_valid, total_valid)):
+        expected = _canonical_platform_formulas(model, row, side)
+        if expected is None or any(
+            formula and _normalized_formula(formula) != _normalized_formula(expected[kind])
+            for kind, formula in formulas.items()
+        ):
             issues.append(
                 _issue(
                     "FORMULA_SEMANTICS_INVALID",
-                    "评分公式必须保留严格状态守卫、同组销量范围、有效域检查与固定 4:4:2 语义",
+                    "评分公式必须与当前表头、真实行号、平台分组和任务满分引用生成的唯一规范公式完全一致",
                     row,
                 )
             )
@@ -861,7 +1019,7 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
 
     for row in strict_rows:
         issues.extend(_validate_images_and_links(row, mode))
-        issues.extend(_validate_formula_semantics(row, effective_mode))
+        issues.extend(_validate_formula_semantics(model, row, effective_mode))
 
         if any(not _gate_passed(_values_for(row, names)) for names in _required_gates(effective_mode)):
             issues.append(_issue("STRICT_GATE_NOT_PASSED", "严格行的全部适用硬门槛必须明确通过", row))
@@ -938,10 +1096,15 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     rating_maximum = _finite_number(_task_value(model.task_fields, "评价满分星级")) if model.task_fields else 5.0
     if rating_maximum is None or rating_maximum <= 0:
         rating_maximum = 5.0
+    expected_scores: dict[tuple[int, str], dict[str, float]] = {}
     if effective_mode in {"amazon", "joint"}:
-        issues.extend(_validate_platform_scores(strict_rows, "amazon", rating_maximum))
+        platform_issues, platform_scores = _validate_platform_scores(strict_rows, "amazon", rating_maximum)
+        issues.extend(platform_issues)
+        expected_scores.update(platform_scores)
     if effective_mode in {"1688", "joint"}:
-        issues.extend(_validate_platform_scores(strict_rows, "1688", rating_maximum))
+        platform_issues, platform_scores = _validate_platform_scores(strict_rows, "1688", rating_maximum)
+        issues.extend(platform_issues)
+        expected_scores.update(platform_scores)
 
     if mode == "joint":
         confirmed, pair_weights = _joint_score_confirmed(model.task_fields)
@@ -963,9 +1126,9 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
                 expected = round(sum(value * weight for value, weight in zip(dimensions, pair_weights)), 2)
                 if abs(recorded - expected) > 0.01 + 1e-12:
                     issues.append(_issue("FINAL_PAIR_SCORE_INVALID", "最终配对得分不符合任务说明确认公式与权重", row))
-            issues.extend(_validate_rank(strict_rows, "joint"))
+            issues.extend(_validate_rank(strict_rows, "joint", expected_scores))
     elif effective_mode in {"amazon", "1688"}:
-        issues.extend(_validate_rank(strict_rows, effective_mode))
+        issues.extend(_validate_rank(strict_rows, effective_mode, expected_scores))
 
     # Compatibility code retained for callers that already key dashboards on
     # the older descending-order issue while the stronger rank issue is used by
@@ -973,7 +1136,10 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     if effective_mode in {"amazon", "1688"}:
         total_names = PLATFORM_FIELDS[effective_mode]["total"]
         ordered_scores = [
-            (row, _finite_number(_values_for(row, total_names)))
+            (
+                row,
+                _expected_score(expected_scores, row, effective_mode, "total", total_names),
+            )
             for row in strict_rows
         ]
         ordered_scores = [(row, score) for row, score in ordered_scores if score is not None]

@@ -51,6 +51,11 @@ export const STRICT_HEADERS = [
   "决策日志引用", "输出时间",
 ];
 
+const PLATFORM_SCORE_HEADERS = new Set([
+  "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分",
+  "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
+]);
+
 const PENDING_HEADERS = [
   "状态", "模式", "记录/配对ID", "平台", "商品图片", "Amazon ASIN", "1688商品ID", "标题/配对说明",
   "缺失或冲突门槛", "现有证据", "补证据动作", "Amazon链接", "1688链接", "主图链接", "证据链接",
@@ -353,16 +358,14 @@ function strictScenarioValues(mode, scenario) {
     "Amazon链接": "https://www.amazon.com/dp/B0SYNTH001", "Amazon主图链接": "https://images.example.com/amazon.png",
     "Amazon目标售价": 150, "Amazon实际售价": 135, "Amazon币种": "USD", "Amazon销量": 100,
     "Amazon销量来源类型": "合成月销量", "Amazon销量统计周期": "近30天", "Amazon评价星级": 4.5,
-    "Amazon评价数量": 200, "Amazon销量得分": 100, "Amazon价格得分": 90, "Amazon评价得分": 90,
-    "Amazon产品总评分": 94,
+    "Amazon评价数量": 200,
   };
   const supply = {
     "1688商品ID": "168800000001", "1688 SKU/规格": "STANDARD", "供应商ID": "SUPPLIER-001",
     "1688链接": "https://detail.1688.com/offer/168800000001.html", "供应商主页": "https://supplier.example.com/company/SUPPLIER-001",
     "1688主图链接": "https://images.example.com/1688.png", "目标成本": 100, "实际单价": 90, "成本币种": "CNY",
     "1688销量": 50, "1688销量来源类型": "合成近30天销量", "1688销量统计周期": "近30天",
-    "1688评价星级": 4, "1688评价数量": 20, "1688销量得分": 100, "1688价格得分": 90,
-    "1688评价得分": 80, "1688产品总评分": 92,
+    "1688评价星级": 4, "1688评价数量": 20,
     "生产能力证据": "同一供应商主体页面列出注塑与组装生产线",
     "ODM/OEM/定制证据": "同一供应商主体支持 OEM、打样和来图定制",
   };
@@ -401,8 +404,10 @@ export async function createScenario(templatePath, outputPath, mode, scenario = 
   task.getRange(`B${TASK_ROW_BY_FIELD["用户确认状态"]}`).values = [["已确认"]];
   const sheet = workbook.worksheets.getItem("严格结果");
   const valuesByHeader = strictScenarioValues(mode, scenario);
-  const rowValues = STRICT_HEADERS.map((header) => valuesByHeader[header] ?? null);
-  sheet.getRange(`A4:${columnName(STRICT_HEADERS.length - 1)}4`).values = [rowValues];
+  for (const [index, header] of STRICT_HEADERS.entries()) {
+    if (PLATFORM_SCORE_HEADERS.has(header)) continue;
+    sheet.getRange(`${columnName(index)}4`).values = [[valuesByHeader[header] ?? null]];
+  }
   const transparentPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl+ZR0AAAAASUVORK5CYII=";
   const imageHeaders = mode === "Amazon" ? ["Amazon商品图片"] : mode === "1688" ? ["1688商品图片"] : ["Amazon商品图片", "1688商品图片"];
   if (scenario !== "missing-image") {

@@ -207,6 +207,33 @@ class FinalFixSemanticTests(unittest.TestCase):
         )
         self.assertIn("FORMULA_SEMANTICS_INVALID", codes(workbook([invalid])))
 
+    def test_formula_semantics_rejects_dead_branches_constants_and_wrong_references(self):
+        adversarial_formulas = {
+            "dead sales branch": {
+                "Amazon销量得分": '=IF($A4<>"严格合格","",ROUND(IF(TRUE,42,IF(COUNTIFS($A$4:$A$103,"严格合格")=1,100,(X4-MINIFS($X$4:$X$103,$A$4:$A$103,"严格合格"))/(MAXIFS($X$4:$X$103,$A$4:$A$103,"严格合格")-MINIFS($X$4:$X$103,$A$4:$A$103,"严格合格"))*100)),2))',
+            },
+            "wrong price reference plus constant": {
+                "Amazon价格得分": '=IF($A4<>"严格合格","",ROUND(MAX(0,100*(1-ABS($Y4-$Z4)/$Z4))+5,2))',
+            },
+            "literal rating score": {
+                "Amazon评价得分": '=IF($A4<>"严格合格","",ROUND(IF($AA4<0,"",IF($AA4>5,"",42)),2))',
+            },
+            "weighted total plus constant": {
+                "Amazon产品总评分": '=IF($A4<>"严格合格","",ROUND($AL4*0.4+$AM4*0.4+$AN4*0.2+7,2))',
+            },
+        }
+        for name, formulas in adversarial_formulas.items():
+            with self.subTest(name=name):
+                invalid = RowRecord(
+                    "严格结果",
+                    4,
+                    amazon_values(),
+                    image_embedded=True,
+                    image_headers=frozenset({"Amazon商品图片"}),
+                    formulas=formulas,
+                )
+                self.assertIn("FORMULA_SEMANTICS_INVALID", codes(workbook([invalid])))
+
     def test_out_of_range_rating_is_not_clamped_or_accepted(self):
         invalid = row(
             amazon_values(**{"Amazon评价星级": 6, "Amazon评价得分": 100}),
