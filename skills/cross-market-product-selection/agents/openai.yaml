@@ -1,4 +1,4 @@
 interface:
-  display_name: "跨市场选品与货源匹配"
-  short_description: "Amazon、1688 与跨平台货源的证据化选品工作流"
-  default_prompt: "使用 $cross-market-product-selection 按硬门槛、证据质量和评分规则完成选品，并输出可复核的 Excel。"
+  display_name: "通用跨市场选品与货源匹配"
+  short_description: "确认外观、功能和目标价格后，完成 Amazon、1688 选品与中文 Excel 交付"
+  default_prompt: "使用 $cross-market-product-selection，先用中文确认目标产品外观、功能、价格和排除项，再核验实际主图与证据，按销量40%、价格40%、评价20%评分，生成嵌入商品主图的中文 Excel。"

@@ -68,6 +68,64 @@ class SkillContractTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, excel)
 
+    def test_readme_and_ui_explain_v110_behavior(self):
+        root = SKILL_DIR.parents[1]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
+
+        for phrase in [
+            "v1.1.0",
+            "确认目标产品外观",
+            "目标售价",
+            "目标成本",
+            "价格允许偏差",
+            "销量 40%",
+            "价格 40%",
+            "评价 20%",
+            "绝对偏差",
+            "嵌入商品主图",
+            "亚马逊候选",
+            "不凑 Top-N",
+            "供应商主页",
+            "生产能力",
+            "ODM/OEM/定制",
+            "Sorftime",
+            "SerpApi",
+        ]:
+            self.assertIn(phrase, readme)
+        self.assertNotIn("Amazon候选", readme)
+        self.assertNotIn("评分数量 25", readme)
+        self.assertTrue((root / "tests").is_dir())
+        self.assertIn("├── tests/", readme)
+        for phrase in [
+            'display_name: "通用跨市场选品与货源匹配"',
+            "确认外观、功能和目标价格后",
+            "中文 Excel",
+            "销量40%、价格40%、评价20%",
+            "嵌入商品主图",
+        ]:
+            self.assertIn(phrase, ui)
+
+    def test_v110_release_notes_preserve_documented_boundaries(self):
+        release = ROOT / "docs" / "releases" / "v1.1.0.md"
+        self.assertTrue(release.is_file(), "缺少 v1.1.0 中文发布说明")
+        text = release.read_text(encoding="utf-8")
+        for phrase in [
+            "## 新增",
+            "## 行为变化",
+            "## 兼容性",
+            "## 安装",
+            "## 验证",
+            "v1.0.0",
+            "仍可安装",
+            "scripts/scoring.py",
+            "scripts/validate_workbook.py",
+            "通用选品数据库模板.xlsx",
+            "不预设冻结窗格",
+            "可在 Excel 中手动冻结",
+        ]:
+            self.assertIn(phrase, text)
+
 
 if __name__ == "__main__":
     unittest.main()
