@@ -214,6 +214,31 @@ def _has_supplier_profile(row: RowRecord) -> bool:
     return _valid_http_url(value)
 
 
+def _has_negative_evidence_context(value: Any) -> bool:
+    text = str(value).strip().casefold()
+    compact = re.sub(r"\s+", "", text)
+    chinese_negatives = (
+        "不支持",
+        "不提供",
+        "没有证据",
+        "无证据",
+        "未有证据",
+        "尚未确认",
+        "待核验",
+        "未知",
+    )
+    if any(negative in compact for negative in chinese_negatives):
+        return True
+    if "定制" in compact and any(negative in compact for negative in ("无法", "不能", "不可")):
+        return True
+    return bool(
+        re.search(
+            r"(?<![a-z])(?:no|not|none|unsupported|false|unknown|pending|n\s*/\s*a)(?![a-z])",
+            text,
+        )
+    )
+
+
 def _has_odm_evidence(row: RowRecord) -> bool:
     for key, value in row.values.items():
         normalized = _normalize_header(key)
@@ -222,13 +247,17 @@ def _has_odm_evidence(row: RowRecord) -> bool:
         if _valid_http_url(value):
             return True
         evidence = _normalize_header(str(value))
-        if evidence in {"空", "无", "否", "不支持", "无证据", "待核验", "未知", "-", "n/a", "na", "no", "false", "none", "null"}:
+        if evidence in {"空", "无", "否", "-", "n/a", "na", "null"}:
             continue
-        if evidence.startswith(("不支持", "无证据", "暂无", "未提供", "不可", "不具备", "待核验", "未知")):
+        if _has_negative_evidence_context(value):
+            continue
+        if evidence.startswith(("暂无", "未提供", "不具备")):
             continue
         if "://" in evidence or evidence.startswith("www."):
             continue
         if any(term in evidence for term in ("支持", "具备", "提供", "接受", "可定制", "能定制", "有证据", "已验证", "已核验", "可做", "承接")):
+            return True
+        if re.search(r"(?<![a-z])(?:support|supports|supported|offer|offers|available|customizable)(?![a-z])", str(value).casefold()):
             return True
     return False
 
@@ -462,9 +491,9 @@ def _drawing_anchors(archive: ZipFile, sheet_part: str, sheet_root: ElementTree.
     return anchors
 
 
-def _find_header_row(rows: dict[int, dict[int, Any]]) -> int | None:
+def _find_header_row(rows: dict[int, dict[int, Any]], anchor: str) -> int | None:
     for row_number in sorted(rows):
-        if any(_normalize_header(str(value)) == "状态" for value in rows[row_number].values() if not _blank(value)):
+        if any(_normalize_header(str(value)) == anchor for value in rows[row_number].values() if not _blank(value)):
             return row_number
     return None
 
@@ -479,10 +508,11 @@ def _extract_sheet(
         raise ValueError(f"工作表部件不存在：{sheet_name}")
     sheet_root = ElementTree.fromstring(archive.read(sheet_part))
     cells_by_row = _sheet_cells(sheet_root, shared_strings)
-    header_row = _find_header_row(cells_by_row)
+    header_anchor = "字段" if sheet_name == "任务说明" else "状态"
+    header_row = _find_header_row(cells_by_row, header_anchor)
     if header_row is None:
         if any(not _blank(value) for cells in cells_by_row.values() for value in cells.values()):
-            raise ValueError(f"工作表“{sheet_name}”非空但找不到规范的“状态”表头")
+            raise ValueError(f"工作表“{sheet_name}”非空但找不到规范的“{header_anchor}”表头")
         return [], []
     header_cells = cells_by_row[header_row]
     if not header_cells:

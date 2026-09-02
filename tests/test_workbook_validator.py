@@ -199,9 +199,10 @@ def _write_empty_valid_ooxml_fixture(path):
             'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
             f'Target="worksheets/sheet{index}.xml"/>'
         )
-        sheet_parts[f"xl/worksheets/sheet{index}.xml"] = """<?xml version="1.0" encoding="UTF-8"?>
+        header = "字段" if name == "任务说明" else "状态"
+        sheet_parts[f"xl/worksheets/sheet{index}.xml"] = f"""<?xml version="1.0" encoding="UTF-8"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
-  <row r="1"><c r="A1" t="inlineStr"><is><t>状态</t></is></c></row>
+  <row r="1"><c r="A1" t="inlineStr"><is><t>{header}</t></is></c></row>
 </sheetData></worksheet>"""
     workbook = (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -537,7 +538,33 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
                 self.assertIn("SUPPLIER_PROFILE_MISSING", codes)
 
     def test_negative_or_placeholder_customization_evidence_is_rejected(self):
-        rejected_values = ("", "无", "否", "不支持", "无证据", "待核验", "未知", "-", "N/A", "no", "false")
+        rejected_values = (
+            "",
+            "无",
+            "否",
+            "不支持",
+            "暂不支持 OEM",
+            "商家明确不支持定制",
+            "无法定制",
+            "不能定制",
+            "不可定制",
+            "不提供 OEM",
+            "没有证据支持 OEM",
+            "无证据",
+            "未有证据支持 ODM",
+            "尚未确认支持 OEM",
+            "待核验",
+            "未知",
+            "-",
+            "N/A",
+            "no OEM service",
+            "not supported",
+            "none",
+            "unsupported ODM",
+            "false",
+            "unknown",
+            "pending",
+        )
         for evidence in rejected_values:
             with self.subTest(evidence=evidence):
                 row = RowRecord(
@@ -560,25 +587,32 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
                 codes = {issue.code for issue in validate_workbook_model(model([row], mode="1688"))}
                 self.assertIn("ODM_EVIDENCE_MISSING", codes)
 
-        positive = RowRecord(
-            "严格结果",
-            4,
-            strict_values(
-                **{
-                    "1688商品ID": "1688-1",
-                    "商品ID": "",
-                    "1688主图链接": "https://example.com/1688.jpg",
-                    "主图链接": "",
-                    "供应商主页": "https://supplier.example.com/store",
-                    "ODM/OEM/定制证据": "https://evidence.example.com/customization",
-                }
-            ),
-            True,
-            frozenset({"1688商品图片"}),
-            frozenset({2}),
-        )
-        codes = {issue.code for issue in validate_workbook_model(model([positive], mode="1688"))}
-        self.assertNotIn("ODM_EVIDENCE_MISSING", codes)
+        for evidence in (
+            "支持 ODM/OEM 定制",
+            "可定制",
+            "supports OEM customization",
+            "https://evidence.example.com/customization",
+        ):
+            with self.subTest(positive_evidence=evidence):
+                positive = RowRecord(
+                    "严格结果",
+                    4,
+                    strict_values(
+                        **{
+                            "1688商品ID": "1688-1",
+                            "商品ID": "",
+                            "1688主图链接": "https://example.com/1688.jpg",
+                            "主图链接": "",
+                            "供应商主页": "https://supplier.example.com/store",
+                            "ODM/OEM/定制证据": evidence,
+                        }
+                    ),
+                    True,
+                    frozenset({"1688商品图片"}),
+                    frozenset({2}),
+                )
+                codes = {issue.code for issue in validate_workbook_model(model([positive], mode="1688"))}
+                self.assertNotIn("ODM_EVIDENCE_MISSING", codes)
 
     def test_total_validation_calls_shared_scoring_function_with_inputs(self):
         row = RowRecord(
@@ -703,6 +737,44 @@ class WorkbookExtractorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload, {"ok": True, "issues": []})
+
+    def test_nonempty_task_instructions_use_exact_field_header(self):
+        task_sheet = """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+  <row r="1"><c r="A1" t="inlineStr"><is><t>选品任务说明</t></is></c></row>
+  <row r="2"><c r="A2" t="inlineStr"><is><t>说明：请填写已确认内容</t></is></c></row>
+  <row r="3"><c r="A3" t="inlineStr"><is><t> 字 段 </t></is></c><c r="B3" t="inlineStr"><is><t>确认内容</t></is></c></row>
+  <row r="4"><c r="A4" t="inlineStr"><is><t>任务模式</t></is></c><c r="B4" t="inlineStr"><is><t>Amazon</t></is></c></row>
+</sheetData></worksheet>"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workbook_path = Path(temporary_directory) / "task-instructions.xlsx"
+            _write_empty_valid_ooxml_fixture(workbook_path)
+            _rewrite_zip(workbook_path, {_empty_fixture_sheet_part("任务说明"): task_sheet})
+
+            extracted = validate_workbook.extract_workbook_model(workbook_path)
+            exit_code, payload, _ = _cli_result(workbook_path)
+
+        task_rows = [row for row in extracted.rows if row.sheet == "任务说明"]
+        self.assertEqual(extracted.headers["任务说明"], ["字 段", "确认内容"])
+        self.assertEqual(task_rows[0].values, {"字 段": "任务模式", "确认内容": "Amazon"})
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload, {"ok": True, "issues": []})
+
+    def test_task_instruction_title_cannot_masquerade_as_field_header(self):
+        task_sheet = """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+  <row r="1"><c r="A1" t="inlineStr"><is><t>字段填写说明</t></is></c></row>
+  <row r="2"><c r="A2" t="inlineStr"><is><t>任务模式</t></is></c><c r="B2" t="inlineStr"><is><t>Amazon</t></is></c></row>
+</sheetData></worksheet>"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workbook_path = Path(temporary_directory) / "fake-task-header.xlsx"
+            _write_empty_valid_ooxml_fixture(workbook_path)
+            _rewrite_zip(workbook_path, {_empty_fixture_sheet_part("任务说明"): task_sheet})
+
+            exit_code, payload, _ = _cli_result(workbook_path)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual({issue["code"] for issue in payload["issues"]}, {"WORKBOOK_READ_ERROR"})
 
     def test_cells_without_references_use_their_reasonable_sequence(self):
         sheet_without_cell_references = """<?xml version="1.0" encoding="UTF-8"?>
