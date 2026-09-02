@@ -28,6 +28,15 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("外观匹配", joint)
         self.assertIn("不得用于核验 1688", serpapi)
 
+    def test_mode_references_tighten_identity_match_and_retry_boundaries(self):
+        amazon = (SKILL_DIR / "references" / "亚马逊模式.md").read_text(encoding="utf-8")
+        joint = (SKILL_DIR / "references" / "联合模式.md").read_text(encoding="utf-8")
+        serpapi = (SKILL_DIR / "references" / "SerpApi亚马逊备用方案.md").read_text(encoding="utf-8")
+        self.assertIn("观测不得作为身份依据", amazon)
+        self.assertIn("分站观测必须保留", amazon)
+        self.assertIn("无法确认为待核验配对", joint)
+        self.assertIn("认证/额度不可重试", serpapi)
+
     def test_every_local_markdown_link_resolves(self):
         markdown_files = [SKILL_DIR / "SKILL.md", *SKILL_DIR.joinpath("references").glob("*.md")]
         pattern = re.compile(r"\[[^\]]+\]\(([^)]+\.md)\)")
