@@ -51,10 +51,9 @@ export const STRICT_HEADERS = [
   "决策日志引用", "输出时间",
 ];
 
-const PLATFORM_SCORE_HEADERS = new Set([
-  "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分",
-  "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
-]);
+const AMAZON_SCORE_HEADERS = ["Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分"];
+const SUPPLY_SCORE_HEADERS = ["1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分"];
+const PLATFORM_SCORE_HEADERS = new Set([...AMAZON_SCORE_HEADERS, ...SUPPLY_SCORE_HEADERS]);
 
 const PENDING_HEADERS = [
   "状态", "模式", "记录/配对ID", "平台", "商品图片", "Amazon ASIN", "1688商品ID", "标题/配对说明",
@@ -407,6 +406,10 @@ export async function createScenario(templatePath, outputPath, mode, scenario = 
   for (const [index, header] of STRICT_HEADERS.entries()) {
     if (PLATFORM_SCORE_HEADERS.has(header)) continue;
     sheet.getRange(`${columnName(index)}4`).values = [[valuesByHeader[header] ?? null]];
+  }
+  const inactiveScoreHeaders = mode === "Amazon" ? SUPPLY_SCORE_HEADERS : mode === "1688" ? AMAZON_SCORE_HEADERS : [];
+  for (const header of inactiveScoreHeaders) {
+    sheet.getRange(cell(STRICT_HEADERS, header)).clear({ applyTo: "contents" });
   }
   const transparentPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl+ZR0AAAAASUVORK5CYII=";
   const imageHeaders = mode === "Amazon" ? ["Amazon商品图片"] : mode === "1688" ? ["1688商品图片"] : ["Amazon商品图片", "1688商品图片"];

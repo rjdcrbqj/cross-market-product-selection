@@ -73,7 +73,7 @@ class RealTemplateIntegrationTests(unittest.TestCase):
                     workbook_path = self.create_scenario(temporary_directory, mode)
                     model = extract_workbook_model(workbook_path)
                     strict = next(row for row in model.rows if row.sheet == "严格结果")
-                    self.assertEqual(set(strict.formulas) & expected_fields, expected_fields)
+                    self.assertEqual(set(strict.formulas), expected_fields)
 
     def test_real_committed_template_rejects_factory_and_image_counterexamples(self):
         cases = (
