@@ -237,10 +237,11 @@ class TemplateContractTests(unittest.TestCase):
 
             with self.subTest(sheet=sheet_name, contract="status validation"):
                 validations = self.xlsx.data_validations(sheet_name)
-                status_validation = [item for item in validations if item[0] == "list" and "A4:A103" in item[1].split()]
-                self.assertEqual(len(status_validation), 1)
-                for status in ("严格", "待核验", "淘汰"):
-                    self.assertIn(status, status_validation[0][2])
+                list_validations = [item for item in validations if item[0] == "list"]
+                self.assertEqual(
+                    list_validations,
+                    [("list", "A4:A103", '"严格合格,待核验,已淘汰"')],
+                )
 
     def test_candidate_and_joint_headers_preserve_exact_order(self):
         self.assertEqual(self.model.headers["亚马逊候选"], AMAZON_HEADERS)

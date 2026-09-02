@@ -51,6 +51,12 @@ REQUIRED_SHEETS = {
 }
 REQUIRED_SCORE_FIELDS = ("销量得分", "价格得分", "评价得分", "总评分")
 IDENTITY_FIELDS = ("记录/配对ID", "商品ID", "Amazon ASIN", "1688商品ID")
+VALID_STATUSES = frozenset({"严格合格", "待核验", "已淘汰"})
+EXPECTED_STATUS_BY_SHEET = {
+    "严格结果": "严格合格",
+    "待核验": "待核验",
+    "淘汰记录": "已淘汰",
+}
 
 
 def _blank(value: Any) -> bool:
@@ -296,6 +302,29 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     for sheet, headers in sorted(model.headers.items()):
         if headers and not any(re.search(r"[\u3400-\u9fff]", str(header)) for header in headers):
             issues.append(_issue("CHINESE_HEADER_MISSING", "数据表缺少中文表头", sheet=sheet))
+
+    for row in model.rows:
+        if row.sheet == "任务说明" or _row_is_blank(row):
+            continue
+        raw_status = row.values.get("状态")
+        status = raw_status.strip() if isinstance(raw_status, str) else raw_status
+        if status not in VALID_STATUSES:
+            issues.append(
+                _issue(
+                    "STATUS_INVALID",
+                    "非空数据行的状态必须是“严格合格”“待核验”或“已淘汰”",
+                    row,
+                )
+            )
+        expected_status = EXPECTED_STATUS_BY_SHEET.get(row.sheet)
+        if expected_status is not None and status != expected_status:
+            issues.append(
+                _issue(
+                    "STATUS_SHEET_MISMATCH",
+                    f"{row.sheet}中的非空行状态必须是“{expected_status}”",
+                    row,
+                )
+            )
 
     mode = _normalized_mode(model.mode)
     strict_rows = [row for row in model.rows if row.sheet == "严格结果" and not _row_is_blank(row)]

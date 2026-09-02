@@ -271,6 +271,71 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
     def test_empty_template_with_chinese_headers_passes(self):
         self.assertEqual(validate_workbook_model(model()), [])
 
+    def test_nonempty_data_rows_reject_missing_or_noncanonical_status(self):
+        rows = [
+            RowRecord("亚马逊候选", 4, {"状态": "严格", "Amazon ASIN": "B0OLDSTATUS"}),
+            RowRecord("1688候选", 5, {"状态": "淘汰", "1688商品ID": "1688-OLD"}),
+            RowRecord("货源匹配", 6, {"状态": "", "记录/配对ID": "PAIR-NO-STATUS"}),
+            RowRecord("严格结果", 7, strict_values(状态="严格"), image_embedded=True),
+            RowRecord("待核验", 8, {"状态": "待处理", "商品ID": "PENDING-INVALID"}),
+            RowRecord("淘汰记录", 9, {"状态": "淘汰", "商品ID": "REJECTED-INVALID"}),
+        ]
+
+        status_issues = [
+            (issue.code, issue.sheet, issue.row)
+            for issue in validate_workbook_model(model(rows))
+            if issue.code == "STATUS_INVALID"
+        ]
+
+        self.assertEqual(
+            status_issues,
+            [
+                ("STATUS_INVALID", "亚马逊候选", 4),
+                ("STATUS_INVALID", "1688候选", 5),
+                ("STATUS_INVALID", "货源匹配", 6),
+                ("STATUS_INVALID", "严格结果", 7),
+                ("STATUS_INVALID", "待核验", 8),
+                ("STATUS_INVALID", "淘汰记录", 9),
+            ],
+        )
+
+    def test_audit_sheets_reject_canonical_status_for_wrong_destination(self):
+        rows = [
+            RowRecord("严格结果", 4, strict_values(状态="待核验"), image_embedded=True),
+            RowRecord("待核验", 5, {"状态": "已淘汰", "商品ID": "PENDING-WRONG"}),
+            RowRecord("淘汰记录", 6, {"状态": "严格合格", "商品ID": "REJECTED-WRONG"}),
+        ]
+
+        mismatch_issues = [
+            (issue.code, issue.sheet, issue.row)
+            for issue in validate_workbook_model(model(rows))
+            if issue.code == "STATUS_SHEET_MISMATCH"
+        ]
+
+        self.assertEqual(
+            mismatch_issues,
+            [
+                ("STATUS_SHEET_MISMATCH", "严格结果", 4),
+                ("STATUS_SHEET_MISMATCH", "待核验", 5),
+                ("STATUS_SHEET_MISMATCH", "淘汰记录", 6),
+            ],
+        )
+
+    def test_candidate_and_match_sheets_accept_every_canonical_status(self):
+        rows = [
+            RowRecord(sheet, index + 4, {"状态": status, "商品ID": f"{sheet}-{index}"})
+            for sheet in ("亚马逊候选", "1688候选", "货源匹配")
+            for index, status in enumerate(("严格合格", "待核验", "已淘汰"))
+        ]
+
+        status_codes = {
+            issue.code
+            for issue in validate_workbook_model(model(rows))
+            if issue.code.startswith("STATUS_")
+        }
+
+        self.assertEqual(status_codes, set())
+
     def test_missing_embedded_image_or_url_is_rejected(self):
         no_image = RowRecord("严格结果", 4, strict_values(), image_embedded=False)
         no_url = RowRecord(
