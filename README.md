@@ -2,18 +2,23 @@
 
 这是一个面向 Amazon、1688 和两端货源匹配的通用选品工作流。它不把某一类产品的外形规则写死：保温杯、工具、家具或其他品类都先按本次任务确认外观、功能、价格和排除项，再用可追溯证据筛选。
 
-当前稳定版本：[`v1.1.0`](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.1.0)。
+当前稳定版本：[`v1.1.1`](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.1.1)。
 
 ## 安装与调用
 
-在 Codex 中新建任务，复制下面的内容安装固定的 v1.1.0：
+在 Codex 中新建任务，复制下面的内容安装固定的 v1.1.1：
+
+```text
+请使用 $skill-installer 安装这个 Skill：
+https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection
+```
+
+需要复现旧行为时，仍可安装历史版本 v1.1.0 或 v1.0.0：
 
 ```text
 请使用 $skill-installer 安装这个 Skill：
 https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection
 ```
-
-需要复现旧行为时，仍可安装历史版本 v1.0.0：
 
 ```text
 请使用 $skill-installer 安装这个 Skill：
@@ -36,10 +41,10 @@ https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cros
 | 需要确认的内容 | 说明 |
 | --- | --- |
 | 任务范围 | Amazon、1688 或联合模式；站点、国家/地区、品类和目标数量 |
-| 参考资料 | 参考图片、商品链接、ASIN、1688 商品 ID 或可描述的结构特征 |
-| 外观与排除项 | 必须出现的外观特点、允许变化，以及不能接受的结构、颜色、套装或配件 |
-| 功能 | 必须功能、可选功能和排除功能；最终以详情页、规格或说明书等功能证据核验 |
-| 价格 | Amazon 使用目标售价，1688 使用目标成本；同时确认币种、目标采购数量/MOQ 和价格允许偏差 |
+| 参考资料 | 目标产品实际图片、商品链接、ASIN 或 1688 商品 ID；只有型号名不能替代参考图 |
+| 外观与排除项 | 编号写成`外观1=……`、`外观2=……`、`排除1=……`，逐项确认必须与禁止出现的结构 |
+| 功能 | 编号写成`功能1=……`、`功能2=……`和`禁用功能1=……`；最终逐项以详情页、规格或说明书证据核验 |
+| 价格 | Amazon 使用目标售价及其允许偏差，1688 使用目标成本及其允许偏差；两侧分别确认币种、采购数量/MOQ 和边界 |
 | 数据口径 | 销量统计周期、评价口径、跨站点去重方式、缺失数据处理和检索预算 |
 
 可复制的开场示例：
@@ -48,14 +53,15 @@ https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cros
 $cross-market-product-selection
 
 模式：Amazon 美国站 + 1688 联合模式；最多需要 10 个严格合格的配对，不足不要凑数。
-请先确认参考图片、外观必须特点、功能、排除项、Amazon 目标售价、1688 目标成本、
-价格允许偏差、采购数量档位和目标站点。
-只有实际主图和功能证据都通过时才进入严格结果；缺证据请转入待核验。
+请先确认目标产品实际参考图，并将外观必须项、外观排除项、必须功能和禁用功能编号；
+分别确认 Amazon 目标售价偏差、1688 目标成本偏差、采购数量档位和目标站点。
+请逐项用实际主图/详情图和功能详情证据核验；看不到关键结构时转入待核验，明确不符时只进入淘汰记录。
+候选表只保留严格合格或待核验，每行嵌入实际商品主图；所有 URL 都要单击即可打开。
 ```
 
 ## 硬门槛、状态与评分
 
-实际主图与功能证据是硬门槛。标题、关键词、搜索缩略图或推测只能帮助发现候选，不能替代对应商品和变体的实际主图、详情页功能证据或商品身份核验。
+实际主图与功能证据是硬门槛。标题、关键词、搜索缩略图或推测只能帮助发现候选，不能替代对应商品和变体的实际主图、详情页功能证据或商品身份核验。严格合格必须在`外观逐项核验`和`功能逐项核验`中覆盖任务书的每个编号；“整体相似”“便携款”“新款”等概括或关键词不能判定通过。
 
 - `严格合格`：所有硬门槛都有可靠的通过证据；
 - `待核验`：没有明确失败证据，但主图、功能、价格、身份、销量、评价或供应商证据缺失、模糊或冲突；
@@ -102,7 +108,9 @@ $cross-market-product-selection
 
 `任务说明`、`亚马逊候选`、`1688候选`、`货源匹配`、`严格结果`、`待核验`、`淘汰记录`。固定七表只表示能力；本次模式读取任务说明“模式”的确认值，每个数据行的“模式”须与其一致。
 
-需要外观核验的严格行，会在商品图片单元格位置嵌入商品主图，并保留与同一商品 ID/变体对应的有效 `http(s)` 主图链接、商品链接和来源链接，便于追溯。链接以有效 URL 文本保留；不要求额外创建 Excel 专用超链接对象。图片、来源、评分输入和状态不完整的行不能进入严格结果。
+`亚马逊候选`、`1688候选`和`货源匹配`只保留严格合格或待核验，已淘汰只写入`淘汰记录`。候选表和严格结果均嵌入商品主图：每个商品行都嵌入本行实际主图，并保留同一商品 ID/变体对应的主图 URL；不接受空白、数字`0`/`1`、图片 ID 或占位图。
+
+商品链接、主图链接、供应商主页和证据链接既保留完整有效的 `http(s)` URL 文本，也建立目标一致的 Excel hyperlink，确保单击即可打开。校验器会检查候选状态、候选图片、可点击链接、外观/功能逐项证据以及严格行的价格范围重算；有任何问题均不得交付。
 
 模板、评分和交付前校验均已随 Skill 提供：
 
@@ -126,12 +134,13 @@ $cross-market-product-selection
 │       └── validate_workbook.py
 ├── tests/                      # 评分、文档、模板与校验器测试
 ├── tools/maintain_selection_template.mjs  # 仅用于维护模板资产
-└── docs/releases/v1.1.0.md
+└── docs/releases/             # 各版本中文发布说明
 ```
 
 ## 版本
 
-- 稳定版：[v1.1.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection)
-- 历史稳定版：[v1.0.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.0.0/skills/cross-market-product-selection)
+- 稳定版：[v1.1.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection)
+- 历史稳定版：[v1.1.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection)
+- 更早版本：[v1.0.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.0.0/skills/cross-market-product-selection)
 - 最新开发版：[main](https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cross-market-product-selection)
 - 许可协议：[MIT License](LICENSE)

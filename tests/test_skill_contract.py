@@ -72,13 +72,13 @@ class SkillContractTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, excel)
 
-    def test_readme_and_ui_explain_v110_behavior(self):
+    def test_readme_and_ui_explain_v111_behavior(self):
         root = SKILL_DIR.parents[1]
         readme = (root / "README.md").read_text(encoding="utf-8")
         ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
         for phrase in [
-            "v1.1.0",
+            "v1.1.1",
             "确认目标产品外观",
             "目标售价",
             "目标成本",
@@ -95,6 +95,9 @@ class SkillContractTests(unittest.TestCase):
             "ODM/OEM/定制",
             "Sorftime",
             "SerpApi",
+            "外观逐项核验",
+            "候选表只保留严格合格或待核验",
+            "单击即可打开",
         ]:
             self.assertIn(phrase, readme)
         self.assertNotIn("Amazon候选", readme)
@@ -107,6 +110,8 @@ class SkillContractTests(unittest.TestCase):
             "中文 Excel",
             "销量40%、价格40%、评价20%",
             "嵌入商品主图",
+            "候选表不得混入已淘汰",
+            "全部 URL 单击可打开",
         ]:
             self.assertIn(phrase, ui)
 
@@ -130,17 +135,40 @@ class SkillContractTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, text)
 
-    def test_excel_output_reference_keeps_urls_as_text_and_no_freeze_claim(self):
+    def test_excel_output_reference_requires_clickable_urls_candidate_images_and_no_freeze_claim(self):
         text = (SKILL_DIR / "references" / "Excel输出规范.md").read_text(encoding="utf-8")
         core = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         for phrase in [
             "具有 host 的有效 http/https URL 文本",
-            "v1.1.0 不要求独立 XLSX hyperlink 对象",
+            "XLSX hyperlink 对象",
+            "候选表不得出现已淘汰",
+            "候选行必须嵌入",
             "必须将实际主图嵌入 Excel",
         ]:
             self.assertIn(phrase, text)
+        self.assertNotIn("不要求独立 XLSX hyperlink 对象", text)
         self.assertNotIn("冻结表头", text)
         self.assertNotIn("冻结表头", core)
+
+    def test_v111_release_notes_document_output_hardening_and_installation(self):
+        release = ROOT / "docs" / "releases" / "v1.1.1.md"
+        self.assertTrue(release.is_file(), "缺少 v1.1.1 中文发布说明")
+        text = release.read_text(encoding="utf-8")
+        for phrase in [
+            "## 修复",
+            "## 其他校验加固",
+            "## 兼容性",
+            "## 安装",
+            "## 验证",
+            "候选表和严格结果",
+            "XLSX hyperlink",
+            "外观逐项核验",
+            "功能逐项核验",
+            "v1.1.0",
+            "v1.0.0",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection",
+        ]:
+            self.assertIn(phrase, text)
 
     def test_readme_and_release_preserve_install_directory_urls(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

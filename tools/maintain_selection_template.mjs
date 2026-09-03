@@ -9,7 +9,8 @@ const [, , command, ...args] = process.argv;
 export const AMAZON_HEADERS = [
   "状态", "模式", "排名", "Amazon商品图片", "站点", "Amazon ASIN", "Amazon变体/SKU", "品牌", "商品标题",
   "Amazon链接", "Amazon主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
-  "详情身份门槛", "证据一致性门槛", "门槛原因", "Amazon目标售价", "Amazon实际售价", "Amazon币种",
+  "详情身份门槛", "证据一致性门槛", "门槛原因", "外观逐项核验", "功能逐项核验",
+  "Amazon目标售价", "Amazon实际售价", "Amazon币种",
   "Amazon销量", "Amazon销量来源类型", "Amazon销量统计周期", "Amazon评价星级", "Amazon评价数量",
   "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分", "核心通过证据", "来源类型",
   "来源链接", "检索路径", "获取时间", "置信度", "冲突说明", "决策日志引用",
@@ -19,7 +20,7 @@ export const SUPPLY_HEADERS = [
   "状态", "模式", "排名", "1688商品图片", "1688商品ID", "1688 SKU/规格", "供应商ID", "店铺名称", "商品标题",
   "1688链接", "供应商主页", "1688主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
   "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "门槛原因", "目标成本",
-  "实际单价", "成本币种", "采购数量档位", "MOQ", "1688销量", "1688销量来源类型", "1688销量统计周期",
+  "外观逐项核验", "功能逐项核验", "实际单价", "成本币种", "采购数量档位", "MOQ", "1688销量", "1688销量来源类型", "1688销量统计周期",
   "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
   "生产能力证据", "ODM/OEM/定制证据", "核心通过证据", "来源类型", "来源链接", "检索路径", "获取时间",
   "置信度", "冲突说明", "决策日志引用",
@@ -30,7 +31,7 @@ export const MATCH_HEADERS = [
   "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "Amazon商品标题", "1688商品标题",
   "Amazon链接", "1688链接", "Amazon主图链接", "1688主图链接", "供应商主页", "产品本体门槛", "外观门槛",
   "功能门槛", "价格/MOQ门槛", "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛",
-  "证据一致性门槛", "外观匹配说明", "功能匹配说明", "市场机会得分", "市场机会结论", "市场机会证据",
+  "证据一致性门槛", "外观逐项核验", "功能逐项核验", "市场机会得分", "市场机会结论", "市场机会证据",
   "供应能力得分", "供应能力结论", "供应能力证据", "匹配质量得分", "匹配质量结论", "匹配质量证据",
   "最终配对得分", "生产能力证据", "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径",
   "获取时间", "置信度", "冲突说明", "决策日志引用",
@@ -40,8 +41,8 @@ export const STRICT_HEADERS = [
   "状态", "模式", "排名", "Amazon商品图片", "1688商品图片", "记录/配对ID", "站点", "Amazon ASIN",
   "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "标题/配对说明", "Amazon链接", "1688链接",
   "供应商主页", "Amazon主图链接", "1688主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
-  "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "外观匹配说明",
-  "功能匹配说明", "Amazon目标售价", "Amazon实际售价", "Amazon币种", "Amazon销量", "Amazon销量来源类型",
+  "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "外观逐项核验",
+  "功能逐项核验", "Amazon目标售价", "Amazon实际售价", "Amazon币种", "Amazon销量", "Amazon销量来源类型",
   "Amazon销量统计周期", "Amazon评价星级", "Amazon评价数量", "Amazon销量得分", "Amazon价格得分", "Amazon评价得分",
   "Amazon产品总评分", "目标成本", "实际单价", "成本币种", "1688销量", "1688销量来源类型", "1688销量统计周期",
   "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
@@ -71,19 +72,20 @@ const TASK_ROWS = [
   ["业务目标", "", "说明严格清单要支持的业务决策"],
   ["品类/用途", "", "填写目标产品与使用场景"],
   ["市场/范围", "", "填写站点、国家、区域或供应范围"],
-  ["参考图片/链接", "", "填写参考图片、商品链接、ASIN 或 1688 商品ID"],
+  ["参考图片/链接", "", "填写目标产品的实际主图、商品详情链接或明确附件名；不能只写型号"],
   ["目标数量", "", "填写最多需要的严格结果数；允许少于该数量"],
-  ["外观必须特点", "", "仅凭实际主图可核验的必备形态、颜色或组合"],
+  ["外观必须特点", "", "按“外观1=…；外观2=…”编号，写可由实际图片判断的形态、结构、比例和组合"],
   ["允许变化", "", "填写可以接受的外观、规格或包装差异"],
-  ["外观排除项", "", "填写明确排除的形态、颜色、附件或变体"],
-  ["必须功能", "", "填写必须由可靠证据确认的功能"],
+  ["外观排除项", "", "按“排除1=…；排除2=…”编号；没有时明确填写“无”"],
+  ["必须功能", "", "按“功能1=…；功能2=…”编号，必须由详情页、规格或说明书证明"],
   ["可选功能", "", "填写加分但不作为硬门槛的功能"],
-  ["排除功能", "", "填写出现即淘汰的功能或用途"],
+  ["排除功能", "", "按“禁用功能1=…”编号；没有时明确填写“无”"],
   ["目标售价", "", "Amazon 价格得分只与该目标售价双向比较"],
   ["目标成本", "", "1688 价格得分只与该目标成本双向比较"],
   ["币种", "", "填写目标售价与目标成本使用的币种"],
   ["采购数量档位", "", "填写用于核验 1688 实际单价的采购数量"],
-  ["价格允许偏差", "", "仅作价格硬门槛；不进入价格得分分母"],
+  ["Amazon价格允许偏差", "", "填 0~1 小数，仅作 Amazon 售价硬门槛；例如 20% 填 0.2"],
+  ["1688价格允许偏差", "", "填 0~1 小数，仅作 1688 成本硬门槛；例如 20% 填 0.2"],
   ["销量统计周期", "", "填写月、近30天或其他明确周期"],
   ["评价口径", "", "填写星级来源、评价数量范围及变体合并规则"],
   ["跨站点去重口径", "", "填写 ASIN、稳定商品ID或规范链接等去重规则"],
@@ -125,6 +127,13 @@ function cell(headers, header, row = 4) {
   const index = headers.indexOf(header);
   if (index < 0) throw new Error(`缺少公式字段：${header}`);
   return `${columnName(index)}${row}`;
+}
+
+function attachExternalHyperlink(sheet, rowIndex, columnIndex, value) {
+  if (typeof value !== "string" || !/^https?:\/\/[^/\s]+/i.test(value)) return;
+  const modelCell = sheet.__getOrCreateCell(rowIndex, columnIndex);
+  modelCell.hyperlink = { uri: value, isExternal: true, action: "" };
+  sheet.writeCellInputToYjs(modelCell);
 }
 
 function columnRange(headers, header) {
@@ -191,9 +200,9 @@ function styleSheet(sheet, headers, title, description, tableName) {
   return { lastColumn, table };
 }
 
-function addStatusRules(sheet) {
+function addStatusRules(sheet, allowedStatuses) {
   const statusRange = sheet.getRange("A4:A103");
-  statusRange.dataValidation = { rule: { type: "list", values: ["严格合格", "待核验", "已淘汰"] } };
+  statusRange.dataValidation = { rule: { type: "list", values: allowedStatuses } };
   statusRange.conditionalFormats.add("containsText", { text: "严格合格", format: { fill: "#DCFCE7", font: { bold: true, color: "#166534" } } });
   statusRange.conditionalFormats.add("containsText", { text: "待核验", format: { fill: "#FEF3C7", font: { bold: true, color: "#92400E" } } });
   statusRange.conditionalFormats.add("containsText", { text: "已淘汰", format: { fill: "#FEE2E2", font: { bold: true, color: "#991B1B" } } });
@@ -228,6 +237,7 @@ function platformFormulas(headers, side) {
   const source = cell(headers, names.source);
   const period = cell(headers, names.period);
   const target = cell(headers, names.target);
+  const taskTarget = taskRef(side === "amazon" ? "目标售价" : "目标成本");
   const actual = cell(headers, names.actual);
   const rating = cell(headers, names.rating);
   const salesRange = columnRange(headers, names.sales);
@@ -244,7 +254,7 @@ function platformFormulas(headers, side) {
   const maximum = `MAXIFS(${salesRange},${criteriaArguments})`;
   const requiredGroupCells = [mode, ...(side === "amazon" ? [cell(headers, "站点")] : []), source, period, sales];
   const salesFormula = `=IF(OR(${status}<>"严格合格",${requiredGroupCells.map((value) => `${value}=""`).join(",")}),"",ROUND(IF(${count}<=1,100,IF(${maximum}=${minimum},100,(${sales}-${minimum})/(${maximum}-${minimum})*100)),2))`;
-  const priceFormula = `=IF(OR(${status}<>"严格合格",${target}="",${actual}="",${target}<=0,${actual}<0),"",ROUND(MAX(0,100*(1-ABS(${actual}-${target})/${target})),2))`;
+  const priceFormula = `=IF(OR(${status}<>"严格合格",${target}="",${taskTarget}="",${target}<>${taskTarget},${actual}="",${taskTarget}<=0,${actual}<0),"",ROUND(MAX(0,100*(1-ABS(${actual}-${taskTarget})/${taskTarget})),2))`;
   const ratingFormula = `=IF(OR(${status}<>"严格合格",${rating}="",${taskRef("评价满分星级")}="",${rating}<0,${rating}>${taskRef("评价满分星级")}),"",ROUND(100*${rating}/${taskRef("评价满分星级")},2))`;
   const salesScore = cell(headers, names.salesScore);
   const priceScore = cell(headers, names.priceScore);
@@ -287,7 +297,7 @@ function buildTaskSheet(workbook) {
   sheet.getRange(`B${TASK_ROW_BY_FIELD["销量权重"]}:B${TASK_ROW_BY_FIELD["权重合计"]}`).format.fill = "#E8F0FE";
   sheet.getRange(`B${TASK_ROW_BY_FIELD["模式"]}`).dataValidation = { rule: { type: "list", values: ["Amazon", "1688", "联合"] } };
   sheet.getRange(`B${TASK_ROW_BY_FIELD["用户确认状态"]}`).dataValidation = { rule: { type: "list", values: ["待用户确认", "已确认", "需补充"] } };
-  sheet.getRange(`B${TASK_ROW_BY_FIELD["价格允许偏差"]}`).format.numberFormat = "0.0%";
+  sheet.getRange(`B${TASK_ROW_BY_FIELD["Amazon价格允许偏差"]}:B${TASK_ROW_BY_FIELD["1688价格允许偏差"]}`).format.numberFormat = "0.0%";
   sheet.getRange(`B${TASK_ROW_BY_FIELD["销量权重"]}:B${TASK_ROW_BY_FIELD["权重合计"]}`).format.numberFormat = "0%";
 }
 
@@ -300,7 +310,7 @@ function buildDataSheet(workbook, config) {
     sheet.getRange(`${cell(config.headers, header)}`).formulas = [[formula]];
   }
   styleSheet(sheet, config.headers, config.title, config.description, config.tableName);
-  addStatusRules(sheet);
+  addStatusRules(sheet, config.allowedStatuses);
   setSemanticFormats(sheet, config.headers);
   return sheet;
 }
@@ -310,33 +320,39 @@ export async function buildTemplate(outputPath) {
   buildTaskSheet(workbook);
   buildDataSheet(workbook, {
     name: "亚马逊候选", title: "亚马逊候选",
-    description: "评分只计算证据完整且状态为严格合格的同模式、同站点、同销量来源类型与同统计周期记录。",
+    description: "只放仍可比较的严格合格或待核验商品；每行必须嵌入实际图片，已淘汰项只进淘汰记录。",
+    allowedStatuses: ["严格合格", "待核验"],
     headers: AMAZON_HEADERS, tableName: "AmazonCandidatesTable", formulas: platformFormulas(AMAZON_HEADERS, "amazon"),
   });
   buildDataSheet(workbook, {
     name: "1688候选", title: "1688候选",
-    description: "严格核验商品、供应商主体、生产能力与明确 ODM/OEM/定制证据；评分仅使用同组严格行。",
+    description: "只放仍可比较的商品/供应商；每行必须嵌入实图并保留商品与供应商主页，已淘汰项只进淘汰记录。",
+    allowedStatuses: ["严格合格", "待核验"],
     headers: SUPPLY_HEADERS, tableName: "SupplyCandidatesTable", formulas: platformFormulas(SUPPLY_HEADERS, "1688"),
   });
   buildDataSheet(workbook, {
     name: "货源匹配", title: "Amazon × 1688 货源匹配",
     description: "市场机会、供应能力与匹配质量分别记录结论和证据；未确认最终配对公式及三类权重时不填最终分和排名。",
+    allowedStatuses: ["严格合格", "待核验"],
     headers: MATCH_HEADERS, tableName: "SourceMatchesTable",
   });
   buildDataSheet(workbook, {
     name: "严格结果", title: "严格结果",
     description: "仅收录全部适用硬门槛与原始评分证据已确认的记录；单平台只要求本侧，联合要求两侧并分离三类判断。",
+    allowedStatuses: ["严格合格"],
     headers: STRICT_HEADERS, tableName: "StrictResultsTable",
     formulas: { ...platformFormulas(STRICT_HEADERS, "amazon"), ...platformFormulas(STRICT_HEADERS, "1688") },
   });
   buildDataSheet(workbook, {
     name: "待核验", title: "待核验",
     description: "没有明确失败但缺少可靠硬门槛或评分原始证据的记录放在这里；写清缺口、现有证据与补证据动作。",
+    allowedStatuses: ["待核验"],
     headers: PENDING_HEADERS, tableName: "PendingAuditTable",
   });
   buildDataSheet(workbook, {
     name: "淘汰记录", title: "淘汰记录",
     description: "只记录已有可靠证据确认失败的记录；必须保留稳定身份、具体失败门槛、失败事实与证据链接。",
+    allowedStatuses: ["已淘汰"],
     headers: REJECTED_HEADERS, tableName: "RejectedAuditTable",
   });
   for (const sheet of workbook.worksheets.items) sheet.freezePanes.freezeRows(3);
@@ -371,7 +387,12 @@ function strictScenarioValues(mode, scenario) {
   const values = {
     "状态": "严格合格", "模式": mode, "排名": mode === "联合" ? "" : 1, "记录/配对ID": `SYNTH-${mode}`,
     "标题/配对说明": "合成集成测试记录", ...gates,
-    "外观匹配说明": "合成主图与任务书外观一致", "功能匹配说明": "合成详情证据确认功能",
+    "外观逐项核验": mode === "联合"
+      ? "外观1=通过（Amazon主图与1688主图均显示目标结构）；外观2=通过（Amazon详情图与1688详情图均显示目标结构）；排除1=通过（Amazon主图与1688主图均未出现排除形态）"
+      : "外观1=通过（实际主图）；外观2=通过（详情图2）；排除1=通过（实际主图未出现排除形态）",
+    "功能逐项核验": mode === "联合"
+      ? "功能1=通过（Amazon详情页与1688详情页规格均明确列出）"
+      : "功能1=通过（商品详情页规格）",
     "核心通过证据": "合成详情、图片、身份与门槛证据", "来源类型": "合成离线测试",
     "来源链接": "https://evidence.example.com/synthetic", "检索路径": "本地合成集成夹具",
     "获取时间": "2026-09-02T10:00:00+08:00", "置信度": "高", "决策日志引用": "SYNTH-001",
@@ -401,23 +422,67 @@ export async function createScenario(templatePath, outputPath, mode, scenario = 
   const task = workbook.worksheets.getItem("任务说明");
   task.getRange(`B${TASK_ROW_BY_FIELD["模式"]}`).values = [[mode]];
   task.getRange(`B${TASK_ROW_BY_FIELD["用户确认状态"]}`).values = [["已确认"]];
+  for (const [field, value] of Object.entries({
+    "参考图片/链接": "https://brand.example.com/target.jpg",
+    "外观必须特点": "外观1=细长一体式主体；外观2=可见双段折叠结构",
+    "外观排除项": "排除1=传统T形折叠手柄",
+    "必须功能": "功能1=高速无刷电机",
+    "排除功能": "无",
+    "目标售价": 150,
+    "目标成本": 100,
+    "Amazon价格允许偏差": 0.2,
+    "1688价格允许偏差": 0.2,
+  })) {
+    const rowNumber = TASK_ROW_BY_FIELD[field];
+    task.getRange(`B${rowNumber}`).values = [[value]];
+    attachExternalHyperlink(task, rowNumber - 1, 1, value);
+  }
   const sheet = workbook.worksheets.getItem("严格结果");
   const valuesByHeader = strictScenarioValues(mode, scenario);
   for (const [index, header] of STRICT_HEADERS.entries()) {
     if (PLATFORM_SCORE_HEADERS.has(header)) continue;
-    sheet.getRange(`${columnName(index)}4`).values = [[valuesByHeader[header] ?? null]];
+    const value = valuesByHeader[header] ?? null;
+    sheet.getRange(`${columnName(index)}4`).values = [[value]];
+    attachExternalHyperlink(sheet, 3, index, value);
   }
   const inactiveScoreHeaders = mode === "Amazon" ? SUPPLY_SCORE_HEADERS : mode === "1688" ? AMAZON_SCORE_HEADERS : [];
   for (const header of inactiveScoreHeaders) {
     sheet.getRange(cell(STRICT_HEADERS, header)).clear({ applyTo: "contents" });
   }
-  const transparentPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl+ZR0AAAAASUVORK5CYII=";
+  const visiblePng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAe0lEQVR4nO3PUQkAIBTAQPOY8IU1jCH8OITBAtzWnvN1iwsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oIHxiJeBC9FO4VqFBlYLAAAAAElFTkSuQmCC";
   const imageHeaders = mode === "Amazon" ? ["Amazon商品图片"] : mode === "1688" ? ["1688商品图片"] : ["Amazon商品图片", "1688商品图片"];
   if (scenario !== "missing-image") {
     for (const header of imageHeaders) {
       sheet.images.add({
-        dataUrl: transparentPng,
+        dataUrl: visiblePng,
         anchor: { from: { row: 3, col: STRICT_HEADERS.indexOf(header) }, extent: { widthPx: 120, heightPx: 75 } },
+      });
+    }
+  }
+  const candidateConfig = mode === "Amazon"
+    ? { sheetName: "亚马逊候选", headers: AMAZON_HEADERS, imageHeaders: ["Amazon商品图片"] }
+    : mode === "1688"
+      ? { sheetName: "1688候选", headers: SUPPLY_HEADERS, imageHeaders: ["1688商品图片"] }
+      : { sheetName: "货源匹配", headers: MATCH_HEADERS, imageHeaders: ["Amazon商品图片", "1688商品图片"] };
+  const candidateSheet = workbook.worksheets.getItem(candidateConfig.sheetName);
+  const candidateValues = {
+    ...valuesByHeader,
+    "商品标题": valuesByHeader["标题/配对说明"],
+    "Amazon商品标题": "合成 Amazon 商品",
+    "1688商品标题": "合成 1688 商品",
+    "店铺名称": "合成供应商",
+  };
+  for (const [index, header] of candidateConfig.headers.entries()) {
+    if (PLATFORM_SCORE_HEADERS.has(header)) continue;
+    const value = candidateValues[header] ?? null;
+    candidateSheet.getRange(`${columnName(index)}4`).values = [[value]];
+    attachExternalHyperlink(candidateSheet, 3, index, value);
+  }
+  if (scenario !== "missing-image") {
+    for (const header of candidateConfig.imageHeaders) {
+      candidateSheet.images.add({
+        dataUrl: visiblePng,
+        anchor: { from: { row: 3, col: candidateConfig.headers.indexOf(header) }, extent: { widthPx: 120, heightPx: 75 } },
       });
     }
   }
@@ -432,9 +497,10 @@ async function inspectWorkbook(workbookPath) {
   const result = await workbook.inspect({ kind: "workbook,sheet,table,formula,drawing", maxChars: 20000, options: { maxResults: 300 } });
   console.log(result.ndjson);
   for (const [sheetId, range] of [
-    ["亚马逊候选", "A3:AL4"],
-    ["1688候选", "A3:AS4"],
-    ["严格结果", "A3:BW4"],
+    ["亚马逊候选", `A3:${columnName(AMAZON_HEADERS.length - 1)}4`],
+    ["1688候选", `A3:${columnName(SUPPLY_HEADERS.length - 1)}4`],
+    ["货源匹配", `A3:${columnName(MATCH_HEADERS.length - 1)}4`],
+    ["严格结果", `A3:${columnName(STRICT_HEADERS.length - 1)}4`],
   ]) {
     const formulas = await workbook.inspect({ kind: "formula", sheetId, range, include: "values,formulas", maxChars: 12000, options: { maxResults: 100 } });
     console.log(formulas.ndjson);

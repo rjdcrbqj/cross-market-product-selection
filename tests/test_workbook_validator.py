@@ -2,11 +2,13 @@ from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 from zipfile import ZipFile
+import zlib
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "skills" / "cross-market-product-selection" / "scripts"
@@ -25,6 +27,29 @@ REQUIRED_SHEETS = {
     "待核验",
     "淘汰记录",
 }
+
+
+def _png_bytes(width=64, height=64, *, transparent=False):
+    """Build a dependency-free, standards-compliant RGB/RGBA PNG test image."""
+
+    color_type = 6 if transparent else 2
+    pixel = bytes((42, 120, 220, 0 if transparent else 255)) if transparent else bytes((42, 120, 220))
+    raw = b"".join(b"\x00" + pixel * width for _ in range(height))
+
+    def chunk(kind, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
 
 
 def model(rows=(), headers=None, mode=None):
@@ -182,8 +207,8 @@ def _write_ooxml_fixture(path):
         archive.writestr("xl/worksheets/_rels/strict.xml.rels", strict_rels)
         archive.writestr("xl/drawings/drawing1.xml", drawing)
         archive.writestr("xl/drawings/_rels/drawing1.xml.rels", drawing_rels)
-        archive.writestr("xl/media/image1.png", b"fixture-image")
-        archive.writestr("xl/media/image2.png", b"absolute-anchor-image")
+        archive.writestr("xl/media/image1.png", _png_bytes())
+        archive.writestr("xl/media/image2.png", _png_bytes())
         archive.writestr("xl/embeddings/object.bin", b"not-an-image-part")
 
 
@@ -325,20 +350,23 @@ class WorkbookValidatorSemanticTests(unittest.TestCase):
             ],
         )
 
-    def test_candidate_and_match_sheets_accept_every_canonical_status(self):
+    def test_candidate_and_match_sheets_accept_only_strict_or_pending_statuses(self):
         rows = [
             RowRecord(sheet, index + 4, {"状态": status, "商品ID": f"{sheet}-{index}"})
             for sheet in ("亚马逊候选", "1688候选", "货源匹配")
             for index, status in enumerate(("严格合格", "待核验", "已淘汰"))
         ]
 
-        status_codes = {
-            issue.code
+        rejected_locations = {
+            (issue.sheet, issue.row)
             for issue in validate_workbook_model(model(rows))
-            if issue.code.startswith("STATUS_")
+            if issue.code == "CANDIDATE_REJECTED_ROW"
         }
 
-        self.assertEqual(status_codes, set())
+        self.assertEqual(
+            rejected_locations,
+            {("亚马逊候选", 6), ("1688候选", 6), ("货源匹配", 6)},
+        )
 
     def test_missing_embedded_image_or_url_is_rejected(self):
         no_image = RowRecord("严格结果", 4, strict_values(), image_embedded=False)

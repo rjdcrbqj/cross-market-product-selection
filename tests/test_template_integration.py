@@ -37,6 +37,7 @@ class RealTemplateIntegrationTests(unittest.TestCase):
         return output
 
     def test_real_committed_template_extracts_and_validates_in_all_three_modes(self):
+        candidate_sheet = {"Amazon": "亚马逊候选", "1688": "1688候选", "联合": "货源匹配"}
         with tempfile.TemporaryDirectory() as temporary_directory:
             for mode in ("Amazon", "1688", "联合"):
                 with self.subTest(mode=mode):
@@ -48,6 +49,14 @@ class RealTemplateIntegrationTests(unittest.TestCase):
                     self.assertEqual(len(strict), 1)
                     expected_images = 2 if mode == "联合" else 1
                     self.assertEqual(len(strict[0].image_headers), expected_images)
+                    candidates = [row for row in model.rows if row.sheet == candidate_sheet[mode]]
+                    self.assertEqual(len(candidates), 1)
+                    self.assertEqual(candidates[0].values["状态"], "严格合格")
+                    self.assertEqual(len(candidates[0].image_headers), expected_images)
+                    for header, value in candidates[0].values.items():
+                        if isinstance(value, str) and value.startswith(("http://", "https://")):
+                            with self.subTest(mode=mode, header=header):
+                                self.assertEqual(candidates[0].hyperlinks.get(header), value)
 
     def test_real_template_scenarios_preserve_platform_score_formulas(self):
         amazon_score_fields = {

@@ -22,7 +22,8 @@ SHEET_ORDER = ["任务说明", "亚马逊候选", "1688候选", "货源匹配", 
 AMAZON_HEADERS = [
     "状态", "模式", "排名", "Amazon商品图片", "站点", "Amazon ASIN", "Amazon变体/SKU", "品牌", "商品标题",
     "Amazon链接", "Amazon主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
-    "详情身份门槛", "证据一致性门槛", "门槛原因", "Amazon目标售价", "Amazon实际售价", "Amazon币种",
+    "详情身份门槛", "证据一致性门槛", "门槛原因", "外观逐项核验", "功能逐项核验",
+    "Amazon目标售价", "Amazon实际售价", "Amazon币种",
     "Amazon销量", "Amazon销量来源类型", "Amazon销量统计周期", "Amazon评价星级", "Amazon评价数量",
     "Amazon销量得分", "Amazon价格得分", "Amazon评价得分", "Amazon产品总评分", "核心通过证据", "来源类型",
     "来源链接", "检索路径", "获取时间", "置信度", "冲突说明", "决策日志引用",
@@ -32,7 +33,7 @@ SUPPLY_HEADERS = [
     "状态", "模式", "排名", "1688商品图片", "1688商品ID", "1688 SKU/规格", "供应商ID", "店铺名称", "商品标题",
     "1688链接", "供应商主页", "1688主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
     "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "门槛原因", "目标成本",
-    "实际单价", "成本币种", "采购数量档位", "MOQ", "1688销量", "1688销量来源类型", "1688销量统计周期",
+    "外观逐项核验", "功能逐项核验", "实际单价", "成本币种", "采购数量档位", "MOQ", "1688销量", "1688销量来源类型", "1688销量统计周期",
     "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
     "生产能力证据", "ODM/OEM/定制证据", "核心通过证据", "来源类型", "来源链接", "检索路径", "获取时间",
     "置信度", "冲突说明", "决策日志引用",
@@ -43,7 +44,7 @@ MATCH_HEADERS = [
     "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "Amazon商品标题", "1688商品标题",
     "Amazon链接", "1688链接", "Amazon主图链接", "1688主图链接", "供应商主页", "产品本体门槛", "外观门槛",
     "功能门槛", "价格/MOQ门槛", "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛",
-    "证据一致性门槛", "外观匹配说明", "功能匹配说明", "市场机会得分", "市场机会结论", "市场机会证据",
+    "证据一致性门槛", "外观逐项核验", "功能逐项核验", "市场机会得分", "市场机会结论", "市场机会证据",
     "供应能力得分", "供应能力结论", "供应能力证据", "匹配质量得分", "匹配质量结论", "匹配质量证据",
     "最终配对得分", "生产能力证据", "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径",
     "获取时间", "置信度", "冲突说明", "决策日志引用",
@@ -53,8 +54,8 @@ STRICT_HEADERS = [
     "状态", "模式", "排名", "Amazon商品图片", "1688商品图片", "记录/配对ID", "站点", "Amazon ASIN",
     "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "标题/配对说明", "Amazon链接", "1688链接",
     "供应商主页", "Amazon主图链接", "1688主图链接", "产品本体门槛", "外观门槛", "功能门槛", "价格/MOQ门槛",
-    "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "外观匹配说明",
-    "功能匹配说明", "Amazon目标售价", "Amazon实际售价", "Amazon币种", "Amazon销量", "Amazon销量来源类型",
+    "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛", "证据一致性门槛", "外观逐项核验",
+    "功能逐项核验", "Amazon目标售价", "Amazon实际售价", "Amazon币种", "Amazon销量", "Amazon销量来源类型",
     "Amazon销量统计周期", "Amazon评价星级", "Amazon评价数量", "Amazon销量得分", "Amazon价格得分", "Amazon评价得分",
     "Amazon产品总评分", "目标成本", "实际单价", "成本币种", "1688销量", "1688销量来源类型", "1688销量统计周期",
     "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
@@ -65,9 +66,9 @@ STRICT_HEADERS = [
 ]
 
 TABLE_REFS = {
-    "任务说明": "A3:C41",
-    "亚马逊候选": f"A3:{_column_name(len(AMAZON_HEADERS)) if '_column_name' in globals() else 'AL'}4",
-    "1688候选": "A3:AS4",
+    "任务说明": "A3:C42",
+    "亚马逊候选": "A3:AN4",
+    "1688候选": "A3:AU4",
     "货源匹配": "A3:AX4",
     "严格结果": "A3:BW4",
     "待核验": "A3:R4",
@@ -233,6 +234,14 @@ class TemplateContractTests(unittest.TestCase):
                 for address in ("A1", "A2", "A3", "A4"):
                     self.assertEqual(self.xlsx.font_name(sheet_name, address), "Microsoft YaHei")
 
+        expected_statuses = {
+            "亚马逊候选": '"严格合格,待核验"',
+            "1688候选": '"严格合格,待核验"',
+            "货源匹配": '"严格合格,待核验"',
+            "严格结果": '"严格合格"',
+            "待核验": '"待核验"',
+            "淘汰记录": '"已淘汰"',
+        }
         for sheet_name in SHEET_ORDER[1:]:
             headers = self.model.headers[sheet_name]
             with self.subTest(sheet=sheet_name, contract="image sizing"):
@@ -251,7 +260,7 @@ class TemplateContractTests(unittest.TestCase):
                 list_validations = [item for item in validations if item[0] == "list"]
                 self.assertEqual(
                     list_validations,
-                    [("list", "A4:A103", '"严格合格,待核验,已淘汰"')],
+                    [("list", "A4:A103", expected_statuses[sheet_name])],
                 )
 
     def test_candidate_and_joint_headers_preserve_exact_order(self):
@@ -268,15 +277,15 @@ class TemplateContractTests(unittest.TestCase):
         }
         expected_fields = {
             "参考图片/链接", "外观必须特点", "允许变化", "外观排除项", "必须功能", "可选功能", "排除功能",
-            "目标售价", "目标成本", "币种", "采购数量档位", "价格允许偏差", "销量统计周期", "评价口径",
+            "目标售价", "目标成本", "币种", "采购数量档位", "Amazon价格允许偏差", "1688价格允许偏差", "销量统计周期", "评价口径",
             "跨站点去重口径", "用户确认状态",
         }
         self.assertTrue(expected_fields.issubset(rows_by_field), expected_fields - rows_by_field.keys())
         self.assertAlmostEqual(float(rows_by_field["销量权重"].values["确认值"]), 0.4)
         self.assertAlmostEqual(float(rows_by_field["价格权重"].values["确认值"]), 0.4)
         self.assertAlmostEqual(float(rows_by_field["评价权重"].values["确认值"]), 0.2)
-        self.assertEqual(self.xlsx.formula("任务说明", "B30"), "SUM(B27:B29)")
-        self.assertAlmostEqual(float(self.xlsx.value("任务说明", "B30")), 1.0)
+        self.assertEqual(self.xlsx.formula("任务说明", "B31"), "SUM(B28:B30)")
+        self.assertAlmostEqual(float(self.xlsx.value("任务说明", "B31")), 1.0)
         for field in ("销量权重", "价格权重", "评价权重"):
             self.assertIn("固定", rows_by_field[field].values["填写说明"])
         for field in ("最终配对评分公式", "市场机会权重", "供应能力权重", "匹配质量权重"):

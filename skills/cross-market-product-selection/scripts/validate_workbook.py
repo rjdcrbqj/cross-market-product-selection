@@ -5,11 +5,13 @@ import math
 from pathlib import Path
 import posixpath
 import re
+import struct
 import sys
 from typing import Any
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
+import zlib
 
 from scoring import price_similarity_score, rating_score, sales_scores, total_score
 
@@ -30,7 +32,9 @@ class RowRecord:
     image_embedded: bool = False
     image_headers: frozenset[str] = field(default_factory=frozenset)
     image_columns: frozenset[int] = field(default_factory=frozenset)
+    invalid_image_headers: frozenset[str] = field(default_factory=frozenset)
     formulas: dict[str, str] = field(default_factory=dict)
+    hyperlinks: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,7 @@ class WorkbookModel:
     rows: list[RowRecord]
     mode: str | None = None
     task_fields: dict[str, Any] = field(default_factory=dict)
+    hyperlinks_checked: bool = False
 
 
 REQUIRED_SHEETS = {
@@ -59,6 +64,7 @@ EXPECTED_STATUS_BY_SHEET = {
     "待核验": "待核验",
     "淘汰记录": "已淘汰",
 }
+CANDIDATE_SHEETS = frozenset({"亚马逊候选", "1688候选", "货源匹配"})
 
 PLATFORM_WEIGHTS = {
     "销量权重": 0.4,
@@ -91,6 +97,8 @@ REQUIRED_HEADERS_BY_SHEET = {
         "Amazon价格得分",
         "Amazon评价得分",
         "Amazon产品总评分",
+        "外观逐项核验",
+        "功能逐项核验",
     },
     "1688候选": {
         "状态",
@@ -113,6 +121,8 @@ REQUIRED_HEADERS_BY_SHEET = {
         "1688价格得分",
         "1688评价得分",
         "1688产品总评分",
+        "外观逐项核验",
+        "功能逐项核验",
         "生产能力证据",
         "ODM/OEM/定制证据",
     },
@@ -132,6 +142,8 @@ REQUIRED_HEADERS_BY_SHEET = {
         "匹配质量结论",
         "匹配质量证据",
         "最终配对得分",
+        "外观逐项核验",
+        "功能逐项核验",
     },
     "严格结果": {
         "状态",
@@ -192,6 +204,8 @@ REQUIRED_HEADERS_BY_SHEET = {
         "匹配质量结论",
         "匹配质量证据",
         "最终配对得分",
+        "外观逐项核验",
+        "功能逐项核验",
         "核心通过证据",
         "生产能力证据",
         "ODM/OEM/定制证据",
@@ -312,6 +326,47 @@ def _valid_http_url(value: Any) -> bool:
         return parsed.scheme.casefold() in {"http", "https"} and bool(parsed.hostname)
     except ValueError:
         return False
+
+
+def _is_url_field(header: str) -> bool:
+    normalized = _normalize_header(header)
+    return "链接" in normalized or "url" in normalized or "主页" in normalized
+
+
+def _urls_match(displayed: Any, target: Any) -> bool:
+    if not _valid_http_url(displayed) or not _valid_http_url(target):
+        return False
+    return str(displayed).strip() == str(target).strip()
+
+
+def _validate_row_urls(row: RowRecord, hyperlinks_checked: bool) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    for header, value in row.values.items():
+        is_url_field = _is_url_field(header)
+        is_url_value = _valid_http_url(value)
+        if is_url_field and not _blank(value) and not is_url_value:
+            issues.append(_issue("URL_INVALID", f"{header}必须是具有 host 的 http/https URL", row))
+            continue
+        if not is_url_value or not hyperlinks_checked:
+            continue
+        target = row.hyperlinks.get(header)
+        if not _urls_match(value, target):
+            issues.append(_issue("HYPERLINK_MISSING", f"{header}必须设置与显示 URL 一致、可单击打开的 Excel hyperlink", row))
+    return issues
+
+
+def _placeholder_sensitive_header(header: str) -> bool:
+    normalized = _normalize_header(header)
+    return any(term in normalized for term in ("图片", "链接", "主页", "证据", "门槛"))
+
+
+def _validate_placeholder_values(row: RowRecord) -> list[ValidationIssue]:
+    for header, value in row.values.items():
+        if not _placeholder_sensitive_header(header):
+            continue
+        if isinstance(value, bool) or (isinstance(value, (int, float)) and value in {0, 1}):
+            return [_issue("PLACEHOLDER_VALUE_INVALID", f"{header}不能用布尔值或数字 0/1 冒充图片、链接、证据或门槛结论", row)]
+    return []
 
 
 def _is_main_image_link_header(header: str) -> bool:
@@ -521,6 +576,310 @@ def _required_gates(mode: str) -> tuple[tuple[str, ...], ...]:
     return shared + amazon + source
 
 
+def _gate_explicitly_failed(value: Any) -> bool:
+    if _blank(value):
+        return False
+    if value is False:
+        return True
+    normalized = _normalize_header(str(value))
+    if normalized in {"否", "false"}:
+        return True
+    return re.match(
+        r"^(?:不通过|失败|不合格|淘汰|不符合|fail(?:ed)?)(?:$|[:：,，;；、.。!！?？\-—（(])",
+        normalized,
+    ) is not None
+
+
+def _has_platform_product_url(row: RowRecord, side: str) -> bool:
+    names = ("Amazon链接", "Amazon商品链接", "商品链接") if side == "amazon" else ("1688链接", "1688商品链接", "商品链接")
+    return _valid_http_url(_values_for(row, names))
+
+
+def _row_status(row: RowRecord) -> Any:
+    value = row.values.get("状态")
+    return value.strip() if isinstance(value, str) else value
+
+
+def _validate_candidate_row(row: RowRecord) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    status = _row_status(row)
+    if status == "已淘汰":
+        return [_issue("CANDIDATE_REJECTED_ROW", "已淘汰记录只能进入淘汰记录，不能保留在候选或匹配表", row)]
+    if status not in {"严格合格", "待核验"}:
+        return issues
+
+    gate_values = (value for header, value in row.values.items() if "门槛" in _normalize_header(header))
+    if any(_gate_explicitly_failed(value) for value in gate_values):
+        issues.append(_issue("CANDIDATE_FAILED_GATE", "候选行已有硬门槛失败证据，必须移入淘汰记录", row))
+
+    if row.sheet == "亚马逊候选":
+        if not _has_amazon_image(row, allow_generic=False):
+            issues.append(_issue("CANDIDATE_IMAGE_MISSING", "亚马逊候选行必须嵌入与同一 ASIN/变体对应的实际图片", row))
+        if not _has_specific_main_image_url(row, "amazon"):
+            issues.append(_issue("CANDIDATE_IMAGE_URL_MISSING", "亚马逊候选行必须保留同一商品的主图 URL", row))
+        if not _has_platform_product_url(row, "amazon"):
+            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "亚马逊候选行必须保留可打开的商品 URL", row))
+    elif row.sheet == "1688候选":
+        if not _has_1688_image(row, allow_generic=False):
+            issues.append(_issue("CANDIDATE_IMAGE_MISSING", "1688 候选行必须嵌入与同一商品/SKU 对应的实际图片", row))
+        if not _has_specific_main_image_url(row, "1688"):
+            issues.append(_issue("CANDIDATE_IMAGE_URL_MISSING", "1688 候选行必须保留同一商品的主图 URL", row))
+        if not _has_platform_product_url(row, "1688") or not _has_supplier_profile(row):
+            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "1688 候选行必须保留商品 URL 和供应商主页", row))
+    elif row.sheet == "货源匹配":
+        if not _has_amazon_image(row, allow_generic=False) or not _has_1688_image(row, allow_generic=False):
+            issues.append(_issue("CANDIDATE_IMAGE_MISSING", "货源匹配候选行必须分别嵌入 Amazon 与 1688 两侧的实际商品图片", row))
+        if not _has_specific_main_image_url(row, "amazon") or not _has_specific_main_image_url(row, "1688"):
+            issues.append(_issue("CANDIDATE_IMAGE_URL_MISSING", "货源匹配候选行必须分别保留 Amazon 与 1688 两侧主图 URL", row))
+        if (
+            not _has_platform_product_url(row, "amazon")
+            or not _has_platform_product_url(row, "1688")
+            or not _has_supplier_profile(row)
+        ):
+            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "货源匹配候选行必须保留两侧商品 URL 和供应商主页", row))
+    return issues
+
+
+def _numbered_checklist_entries(value: Any, prefix: str) -> tuple[tuple[str, str], ...]:
+    if _blank(value):
+        return ()
+    pattern = (
+        rf"{re.escape(prefix)}\s*(\d+)\s*[=：:]\s*(.*?)"
+        rf"(?=(?:[；;\n]+)?\s*{re.escape(prefix)}\s*\d+\s*[=：:]|$)"
+    )
+    ordered: list[tuple[str, str]] = []
+    for match in re.finditer(pattern, str(value), flags=re.IGNORECASE | re.DOTALL):
+        number, description = match.groups()
+        item = f"{prefix}{int(number)}"
+        if not any(existing == item for existing, _ in ordered):
+            ordered.append((item, description.strip(" \t\r\n；;，,")))
+    return tuple(ordered)
+
+
+def _numbered_checklist_ids(value: Any, prefix: str) -> tuple[str, ...]:
+    return tuple(item for item, _ in _numbered_checklist_entries(value, prefix))
+
+
+def _checklist_ids_are_continuous(items: tuple[str, ...], prefix: str) -> bool:
+    return items == tuple(f"{prefix}{index}" for index in range(1, len(items) + 1))
+
+
+def _optional_checklist_is_valid(value: Any, prefix: str) -> bool:
+    if _blank(value):
+        return False
+    normalized = _normalize_header(str(value))
+    if normalized in {"无", "没有", "不适用", "none", "无排除项"}:
+        return True
+    entries = _numbered_checklist_entries(value, prefix)
+    items = tuple(item for item, _ in entries)
+    return bool(entries) and all(description for _, description in entries) and _checklist_ids_are_continuous(items, prefix)
+
+
+def _checklist_entry_passes(
+    text: Any,
+    item: str,
+    evidence_markers: tuple[str, ...],
+    mode: str,
+) -> bool:
+    if _blank(text):
+        return False
+    normalized_item = _normalize_header(item)
+    for segment in re.split(r"[；;\n]+", str(text)):
+        compact = _normalize_header(segment)
+        if normalized_item not in compact:
+            continue
+        if re.search(rf"{re.escape(normalized_item)}(?:=|:|：)通过", compact) is None:
+            continue
+        if not any(marker in compact for marker in evidence_markers):
+            continue
+        if mode == "joint" and not (
+            ("amazon" in compact or "亚马逊" in compact) and "1688" in compact
+        ):
+            continue
+        is_exclusion = normalized_item.startswith(("排除", "禁用功能"))
+        uncertainty_markers = ("无法确认", "无法判断", "看不清", "未知", "待核验", "证据不足", "未核验")
+        if any(marker in compact for marker in uncertainty_markers):
+            continue
+        if re.search(r"(?<![a-z])(?:unknown|pending|unclear|unverified|missing)(?![a-z])", compact):
+            continue
+        if is_exclusion:
+            absence_markers = ("未出现", "未显示", "未发现", "没有", "无此", "不存在", "不含", "不是", "排除")
+            if not any(marker in compact for marker in absence_markers) and not re.search(
+                r"(?<![a-z])(?:no|not|without|absent)(?![a-z])", compact
+            ):
+                continue
+        else:
+            contradiction_markers = (
+                "不是",
+                "不符合",
+                "不符",
+                "未提供",
+                "未显示",
+                "未见",
+                "没有",
+                "缺少",
+                "缺失",
+                "不支持",
+                "不具备",
+            )
+            if any(marker in compact for marker in contradiction_markers) or re.search(
+                r"(?<![a-z])(?:no|not|without|absent|unsupported)(?![a-z])", compact
+            ):
+                continue
+        return True
+    return False
+
+
+def _task_target_price(task_fields: dict[str, Any], side: str) -> float | None:
+    name = "目标售价" if side == "amazon" else "目标成本"
+    value = _finite_number(_task_value(task_fields, name))
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def _task_price_tolerance(task_fields: dict[str, Any], side: str) -> float | None:
+    platform_name = "Amazon价格允许偏差" if side == "amazon" else "1688价格允许偏差"
+    value = _finite_number(_task_value(task_fields, platform_name))
+    if value is None:
+        value = _finite_number(_task_value(task_fields, "价格允许偏差"))
+    if value is None or value < 0 or value > 1:
+        return None
+    return value
+
+
+def _task_brief_requirements(model: WorkbookModel, mode: str) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, float]]:
+    appearance = _numbered_checklist_ids(_task_value(model.task_fields, "外观必须特点"), "外观")
+    exclusions = _numbered_checklist_ids(_task_value(model.task_fields, "外观排除项"), "排除")
+    functions = _numbered_checklist_ids(_task_value(model.task_fields, "必须功能"), "功能")
+    excluded_functions = _numbered_checklist_ids(_task_value(model.task_fields, "排除功能"), "禁用功能")
+    sides = ("amazon", "1688") if mode == "joint" else (mode,)
+    tolerances = {
+        side: tolerance
+        for side in sides
+        if (tolerance := _task_price_tolerance(model.task_fields, side)) is not None
+    }
+    return appearance + exclusions, functions + excluded_functions, tolerances
+
+
+def _validate_task_brief(model: WorkbookModel, rows: list[RowRecord], mode: str) -> list[ValidationIssue]:
+    if not rows:
+        return []
+    _, _, tolerances = _task_brief_requirements(model, mode)
+    missing: list[str] = []
+    if _blank(_task_value(model.task_fields, "参考图片/链接")):
+        missing.append("参考图片/链接")
+    appearance_entries = _numbered_checklist_entries(_task_value(model.task_fields, "外观必须特点"), "外观")
+    appearance = tuple(item for item, _ in appearance_entries)
+    function_entries = _numbered_checklist_entries(_task_value(model.task_fields, "必须功能"), "功能")
+    functions = tuple(item for item, _ in function_entries)
+    if (
+        not appearance_entries
+        or not all(description for _, description in appearance_entries)
+        or not _checklist_ids_are_continuous(appearance, "外观")
+    ):
+        missing.append("外观必须特点（外观1、外观2……）")
+    if not _optional_checklist_is_valid(_task_value(model.task_fields, "外观排除项"), "排除"):
+        missing.append("外观排除项（排除1、排除2……；无则填“无”）")
+    if (
+        not function_entries
+        or not all(description for _, description in function_entries)
+        or not _checklist_ids_are_continuous(functions, "功能")
+    ):
+        missing.append("必须功能（功能1、功能2……）")
+    if not _optional_checklist_is_valid(_task_value(model.task_fields, "排除功能"), "禁用功能"):
+        missing.append("排除功能（禁用功能1、禁用功能2……；无则填“无”）")
+    if _normalize_header(str(_task_value(model.task_fields, "用户确认状态") or "")) != _normalize_header("已确认"):
+        missing.append("用户确认状态=已确认")
+    sides = ("amazon", "1688") if mode == "joint" else (mode,)
+    for side in sides:
+        if _task_target_price(model.task_fields, side) is None:
+            missing.append("目标售价" if side == "amazon" else "目标成本")
+        if side not in tolerances:
+            missing.append("Amazon价格允许偏差" if side == "amazon" else "1688价格允许偏差")
+    if missing:
+        return [_issue("TASK_BRIEF_INCOMPLETE", f"任务说明未冻结可机器核验的必需字段：{'、'.join(missing)}", sheet="任务说明")]
+    return []
+
+
+def _validate_strict_checklists(
+    row: RowRecord,
+    appearance_ids: tuple[str, ...],
+    function_ids: tuple[str, ...],
+    mode: str,
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    appearance_text = _values_for(row, ("外观逐项核验",))
+    if not appearance_ids or any(
+        not _checklist_entry_passes(appearance_text, item, ("主图", "详情图", "实物图", "图片", "视频"), mode)
+        for item in appearance_ids
+    ):
+        issues.append(
+            _issue(
+                "STRICT_APPEARANCE_EVIDENCE_INCOMPLETE",
+                "严格行必须按任务书全部外观/排除编号逐项写明“通过”及实际图片证据；标题或关键词不能代替",
+                row,
+            )
+        )
+    function_text = _values_for(row, ("功能逐项核验",))
+    if not function_ids or any(
+        not _checklist_entry_passes(
+            function_text,
+            item,
+            ("详情页", "商品页", "规格", "说明书", "参数", "检测", "认证"),
+            mode,
+        )
+        for item in function_ids
+    ):
+        issues.append(
+            _issue(
+                "STRICT_FUNCTION_EVIDENCE_INCOMPLETE",
+                "严格行必须按任务书全部功能编号逐项写明“通过”及详情/规格证据；标题或关键词不能代替",
+                row,
+            )
+        )
+    return issues
+
+
+def _validate_strict_price_range(
+    row: RowRecord,
+    mode: str,
+    tolerances: dict[str, float],
+    task_fields: dict[str, Any],
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    sides = ("amazon", "1688") if mode == "joint" else (mode,)
+    for side in sides:
+        tolerance = tolerances.get(side)
+        if tolerance is None:
+            continue
+        fields = PLATFORM_FIELDS[side]
+        task_target = _task_target_price(task_fields, side)
+        row_target = _finite_number(_values_for(row, fields["target"]))
+        actual = _finite_number(_values_for(row, fields["actual"]))
+        if task_target is None:
+            continue
+        if row_target is None or abs(row_target - task_target) > max(1e-9, abs(task_target) * 1e-9):
+            issues.append(
+                _issue(
+                    "STRICT_TARGET_PRICE_MISMATCH",
+                    f"严格行的{'Amazon 目标售价' if side == 'amazon' else '1688 目标成本'}必须与任务说明确认值一致",
+                    row,
+                )
+            )
+        if actual is None or actual < 0:
+            continue
+        if abs(actual - task_target) / task_target > tolerance + 1e-12:
+            issues.append(
+                _issue(
+                    "STRICT_PRICE_OUT_OF_RANGE",
+                    f"严格行的{'Amazon 售价' if side == 'amazon' else '1688 成本'}超出任务说明确认的价格允许偏差",
+                    row,
+                )
+            )
+    return issues
+
+
 def _validate_required_headers(model: WorkbookModel) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     contract_fields = {"模式", *PLATFORM_WEIGHTS}
@@ -618,12 +977,14 @@ def _validate_platform_scores(
     rows: list[RowRecord],
     side: str,
     rating_maximum: float,
+    task_fields: dict[str, Any],
 ) -> tuple[list[ValidationIssue], dict[tuple[int, str], dict[str, float]]]:
     issues: list[ValidationIssue] = []
     expected_by_row: dict[tuple[int, str], dict[str, float]] = {}
     fields = PLATFORM_FIELDS[side]
     usable: list[tuple[RowRecord, dict[str, float], dict[str, float | None], tuple[str, ...]]] = []
-    required_numeric = ("target", "actual", "sales", "rating", "reviews")
+    task_target = _task_target_price(task_fields, side)
+    required_numeric = ("actual", "sales", "rating", "reviews")
     required_scores = ("sales_score", "price_score", "rating_score", "total")
 
     for row in rows:
@@ -648,7 +1009,7 @@ def _validate_platform_scores(
             else:
                 if abs(recorded["total"] - expected_recorded_total) > 0.01 + 1e-12:
                     issues.append(_issue("SCORE_WEIGHTS_INVALID", "平台产品总评分不符合固定 4:4:2", row))
-        if any(value is None for value in raw.values()) or group is None:
+        if task_target is None or any(value is None for value in raw.values()) or group is None:
             issues.append(
                 _issue(
                     "STRICT_RAW_SCORE_MISSING",
@@ -660,7 +1021,7 @@ def _validate_platform_scores(
         if raw["rating"] < 0 or raw["rating"] > rating_maximum:
             issues.append(_issue("RATING_INPUT_INVALID", "评价星级必须处于 0 到任务确认满分之间", row))
             continue
-        if raw["target"] <= 0 or raw["actual"] < 0 or raw["sales"] < 0 or raw["reviews"] < 0:
+        if raw["actual"] < 0 or raw["sales"] < 0 or raw["reviews"] < 0:
             issues.append(_issue("STRICT_RAW_SCORE_INVALID", "销量、价格或评价数量原始值超出有效范围", row))
             continue
         usable.append((row, raw, recorded, group))
@@ -675,7 +1036,8 @@ def _validate_platform_scores(
     for group_rows in grouped.values():
         expected_sales_scores = sales_scores([raw["sales"] for _, raw, _ in group_rows])
         for (row, raw, recorded), expected_sales in zip(group_rows, expected_sales_scores):
-            expected_price = price_similarity_score(raw["actual"], raw["target"])
+            assert task_target is not None
+            expected_price = price_similarity_score(raw["actual"], task_target)
             expected_rating = rating_score(raw["rating"], rating_maximum)
             expected_total = total_score(expected_sales, expected_price, expected_rating)
             expected = {
@@ -817,7 +1179,7 @@ def _header_for(headers: list[str], names: tuple[str, ...]) -> str | None:
     return None
 
 
-def _task_rating_reference(model: WorkbookModel) -> str | None:
+def _task_field_reference(model: WorkbookModel, expected_field_name: str) -> str | None:
     headers = model.headers.get("任务说明", [])
     value_header = _header_for(headers, ("确认值", "确认内容"))
     if value_header is None:
@@ -827,7 +1189,7 @@ def _task_rating_reference(model: WorkbookModel) -> str | None:
         if task_row.sheet != "任务说明":
             continue
         field_name = _values_for(task_row, ("字段",))
-        if not _blank(field_name) and _normalize_header(str(field_name)) == _normalize_header("评价满分星级"):
+        if not _blank(field_name) and _normalize_header(str(field_name)) == _normalize_header(expected_field_name):
             return f"'任务说明'!${value_column}${task_row.row}"
     return None
 
@@ -839,8 +1201,9 @@ def _canonical_platform_formulas(
 ) -> dict[str, str] | None:
     headers = model.headers.get(row.sheet, [])
     fields = PLATFORM_FIELDS[side]
-    rating_reference = _task_rating_reference(model)
-    if not headers or rating_reference is None:
+    rating_reference = _task_field_reference(model, "评价满分星级")
+    target_reference = _task_field_reference(model, "目标售价" if side == "amazon" else "目标成本")
+    if not headers or rating_reference is None or target_reference is None:
         return None
 
     def cell(names: tuple[str, ...], *, absolute_column: bool = False) -> str:
@@ -863,7 +1226,7 @@ def _canonical_platform_formulas(
         sales = cell(fields["sales"])
         source = cell(fields["source"])
         period = cell(fields["period"])
-        target = cell(fields["target"])
+        row_target = cell(fields["target"])
         actual = cell(fields["actual"])
         rating = cell(fields["rating"])
         sales_range = column_range(fields["sales"])
@@ -893,8 +1256,9 @@ def _canonical_platform_formulas(
             f"({sales}-{minimum})/({maximum}-{minimum})*100)),2))"
         )
         price_formula = (
-            f'IF(OR({status}<>"严格合格",{target}="",{actual}="",{target}<=0,{actual}<0),"",'
-            f"ROUND(MAX(0,100*(1-ABS({actual}-{target})/{target})),2))"
+            f'IF(OR({status}<>"严格合格",{row_target}="",{target_reference}="",'
+            f'{row_target}<>{target_reference},{actual}="",{target_reference}<=0,{actual}<0),"",'
+            f"ROUND(MAX(0,100*(1-ABS({actual}-{target_reference})/{target_reference})),2))"
         )
         rating_formula = (
             f'IF(OR({status}<>"严格合格",{rating}="",{rating_reference}="",{rating}<0,'
@@ -944,7 +1308,7 @@ def _validate_formula_semantics(
             issues.append(
                 _issue(
                     "FORMULA_SEMANTICS_INVALID",
-                    "评分公式必须与当前表头、真实行号、平台分组和任务满分引用生成的唯一规范公式完全一致",
+                    "评分公式必须与当前表头、真实行号、平台分组、任务目标价格和任务满分引用生成的唯一规范公式完全一致",
                     row,
                 )
             )
@@ -964,10 +1328,21 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     issues.extend(_validate_required_headers(model))
 
     for row in model.rows:
-        if row.sheet == "任务说明" or _row_is_blank(row):
+        if _row_is_blank(row):
             continue
-        raw_status = row.values.get("状态")
-        status = raw_status.strip() if isinstance(raw_status, str) else raw_status
+        issues.extend(_validate_placeholder_values(row))
+        if row.invalid_image_headers:
+            issues.append(
+                _issue(
+                    "IMAGE_PLACEHOLDER_INVALID",
+                    "嵌入图片必须是可解码且至少 32×32 的非全透明实际图片；占位图不能算作商品图片",
+                    row,
+                )
+            )
+        issues.extend(_validate_row_urls(row, model.hyperlinks_checked))
+        if row.sheet == "任务说明":
+            continue
+        status = _row_status(row)
         if status not in VALID_STATUSES:
             issues.append(
                 _issue(
@@ -985,6 +1360,8 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
                     row,
                 )
             )
+        if row.sheet in CANDIDATE_SHEETS:
+            issues.extend(_validate_candidate_row(row))
 
     data_rows = [row for row in model.rows if row.sheet != "任务说明" and not _row_is_blank(row)]
     strict_rows = [row for row in data_rows if row.sheet == "严格结果"]
@@ -1010,6 +1387,27 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
             issues.append(_issue("FIXED_WEIGHTS_INVALID", "平台产品评分权重必须固定为 0.4/0.4/0.2", sheet="任务说明"))
 
     effective_mode = mode or "amazon"
+    eligible_rows = [
+        row
+        for row in data_rows
+        if row.sheet in CANDIDATE_SHEETS | {"严格结果"}
+        and _row_status(row) in {"严格合格", "待核验"}
+    ]
+    if mode is not None:
+        issues.extend(_validate_task_brief(model, eligible_rows, mode))
+    appearance_ids, function_ids, tolerances = _task_brief_requirements(model, effective_mode)
+    strict_state_rows = [
+        row
+        for row in data_rows
+        if row.sheet in CANDIDATE_SHEETS | {"严格结果"} and _row_status(row) == "严格合格"
+    ]
+    for row in strict_state_rows:
+        if any(not _gate_passed(_values_for(row, names)) for names in _required_gates(effective_mode)):
+            issues.append(_issue("STRICT_GATE_NOT_PASSED", "严格行的全部适用硬门槛必须明确通过", row))
+        issues.extend(_validate_strict_checklists(row, appearance_ids, function_ids, effective_mode))
+        if row.sheet != "货源匹配":
+            issues.extend(_validate_strict_price_range(row, effective_mode, tolerances, model.task_fields))
+
     seen_record_ids: dict[str, RowRecord] = {}
     seen_amazon: dict[tuple[str, ...], RowRecord] = {}
     seen_products: dict[tuple[str, ...], RowRecord] = {}
@@ -1020,9 +1418,6 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
     for row in strict_rows:
         issues.extend(_validate_images_and_links(row, mode))
         issues.extend(_validate_formula_semantics(model, row, effective_mode))
-
-        if any(not _gate_passed(_values_for(row, names)) for names in _required_gates(effective_mode)):
-            issues.append(_issue("STRICT_GATE_NOT_PASSED", "严格行的全部适用硬门槛必须明确通过", row))
 
         record_id = _values_for(row, ("记录/配对ID",))
         if not _blank(record_id):
@@ -1098,13 +1493,41 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
         rating_maximum = 5.0
     expected_scores: dict[tuple[int, str], dict[str, float]] = {}
     if effective_mode in {"amazon", "joint"}:
-        platform_issues, platform_scores = _validate_platform_scores(strict_rows, "amazon", rating_maximum)
+        platform_issues, platform_scores = _validate_platform_scores(
+            strict_rows,
+            "amazon",
+            rating_maximum,
+            model.task_fields,
+        )
         issues.extend(platform_issues)
         expected_scores.update(platform_scores)
     if effective_mode in {"1688", "joint"}:
-        platform_issues, platform_scores = _validate_platform_scores(strict_rows, "1688", rating_maximum)
+        platform_issues, platform_scores = _validate_platform_scores(
+            strict_rows,
+            "1688",
+            rating_maximum,
+            model.task_fields,
+        )
         issues.extend(platform_issues)
         expected_scores.update(platform_scores)
+
+    for sheet_name, side in (("亚马逊候选", "amazon"), ("1688候选", "1688")):
+        strict_candidates = [
+            row
+            for row in data_rows
+            if row.sheet == sheet_name and _row_status(row) == "严格合格"
+        ]
+        if not strict_candidates:
+            continue
+        candidate_issues, _ = _validate_platform_scores(
+            strict_candidates,
+            side,
+            rating_maximum,
+            model.task_fields,
+        )
+        issues.extend(candidate_issues)
+        for row in strict_candidates:
+            issues.extend(_validate_formula_semantics(model, row, side))
 
     if mode == "joint":
         confirmed, pair_weights = _joint_score_confirmed(model.task_fields)
@@ -1185,8 +1608,13 @@ def _relationships(archive: ZipFile, source_part: str) -> dict[str, tuple[str, s
         relationship_id = relationship.get("Id")
         target = relationship.get("Target")
         if relationship_id and target:
+            resolved_target = (
+                target
+                if relationship.get("TargetMode", "").casefold() == "external"
+                else _resolve_part(source_part, target)
+            )
             relationships[relationship_id] = (
-                _resolve_part(source_part, target),
+                resolved_target,
                 relationship.get("Type", ""),
             )
     return relationships
@@ -1276,9 +1704,161 @@ def _sheet_formulas(root: ElementTree.Element) -> dict[int, dict[int, str]]:
     return rows
 
 
-def _drawing_anchors(archive: ZipFile, sheet_part: str, sheet_root: ElementTree.Element) -> dict[int, set[int]]:
+def _png_chunks(data: bytes) -> list[tuple[bytes, bytes]] | None:
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    chunks: list[tuple[bytes, bytes]] = []
+    offset = 8
+    while offset + 12 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        end = offset + 12 + length
+        if end > len(data):
+            return None
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + length]
+        recorded_crc = struct.unpack(">I", data[offset + 8 + length : end])[0]
+        if (zlib.crc32(kind + payload) & 0xFFFFFFFF) != recorded_crc:
+            return None
+        chunks.append((kind, payload))
+        offset = end
+        if kind == b"IEND":
+            return chunks if offset == len(data) else None
+    return None
+
+
+def _paeth_predictor(left: int, up: int, upper_left: int) -> int:
+    prediction = left + up - upper_left
+    left_distance = abs(prediction - left)
+    up_distance = abs(prediction - up)
+    upper_left_distance = abs(prediction - upper_left)
+    if left_distance <= up_distance and left_distance <= upper_left_distance:
+        return left
+    if up_distance <= upper_left_distance:
+        return up
+    return upper_left
+
+
+def _png_is_fully_transparent(chunks: list[tuple[bytes, bytes]]) -> bool | None:
+    ihdr = next((payload for kind, payload in chunks if kind == b"IHDR"), None)
+    if ihdr is None or len(ihdr) != 13:
+        return None
+    width, height, bit_depth, color_type, compression, filtering, interlace = struct.unpack(
+        ">IIBBBBB", ihdr
+    )
+    if color_type not in {4, 6}:
+        return False
+    if bit_depth != 8 or compression != 0 or filtering != 0 or interlace != 0:
+        return None
+    bytes_per_pixel = 2 if color_type == 4 else 4
+    stride = width * bytes_per_pixel
+    expected_length = height * (stride + 1)
+    if expected_length <= 0 or expected_length > 32 * 1024 * 1024:
+        return None
+    compressed = b"".join(payload for kind, payload in chunks if kind == b"IDAT")
+    if not compressed:
+        return None
+    try:
+        decoded = zlib.decompress(compressed)
+    except zlib.error:
+        return None
+    if len(decoded) != expected_length:
+        return None
+    previous = bytearray(stride)
+    offset = 0
+    any_visible_alpha = False
+    alpha_offset = 1 if color_type == 4 else 3
+    for _ in range(height):
+        filter_type = decoded[offset]
+        offset += 1
+        filtered = decoded[offset : offset + stride]
+        offset += stride
+        reconstructed = bytearray(stride)
+        for index, value in enumerate(filtered):
+            left = reconstructed[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            up = previous[index]
+            upper_left = previous[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            if filter_type == 0:
+                predictor = 0
+            elif filter_type == 1:
+                predictor = left
+            elif filter_type == 2:
+                predictor = up
+            elif filter_type == 3:
+                predictor = (left + up) // 2
+            elif filter_type == 4:
+                predictor = _paeth_predictor(left, up, upper_left)
+            else:
+                return None
+            reconstructed[index] = (value + predictor) & 0xFF
+        if any(reconstructed[index] > 0 for index in range(alpha_offset, stride, bytes_per_pixel)):
+            any_visible_alpha = True
+            break
+        previous = reconstructed
+    return not any_visible_alpha
+
+
+def _image_dimensions(data: bytes) -> tuple[int, int, str, list[tuple[bytes, bytes]] | None] | None:
+    png_chunks = _png_chunks(data)
+    if png_chunks is not None:
+        ihdr = next((payload for kind, payload in png_chunks if kind == b"IHDR"), None)
+        if ihdr is None or len(ihdr) != 13:
+            return None
+        width, height = struct.unpack(">II", ihdr[:8])
+        return width, height, "png", png_chunks
+    if data.startswith((b"GIF87a", b"GIF89a")) and len(data) >= 10:
+        width, height = struct.unpack("<HH", data[6:10])
+        return width, height, "gif", None
+    if data.startswith(b"BM") and len(data) >= 26:
+        width, height = struct.unpack("<ii", data[18:26])
+        return abs(width), abs(height), "bmp", None
+    if data.startswith(b"\xff\xd8"):
+        offset = 2
+        start_of_frame = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+        while offset + 4 <= len(data):
+            if data[offset] != 0xFF:
+                offset += 1
+                continue
+            while offset < len(data) and data[offset] == 0xFF:
+                offset += 1
+            if offset >= len(data):
+                break
+            marker = data[offset]
+            offset += 1
+            if marker in {0x01, *range(0xD0, 0xD9)}:
+                continue
+            if offset + 2 > len(data):
+                break
+            segment_length = struct.unpack(">H", data[offset : offset + 2])[0]
+            if segment_length < 2 or offset + segment_length > len(data):
+                break
+            if marker in start_of_frame and segment_length >= 7:
+                height, width = struct.unpack(">HH", data[offset + 3 : offset + 7])
+                return width, height, "jpeg", None
+            offset += segment_length
+    return None
+
+
+def _usable_product_image(data: bytes) -> bool:
+    metadata = _image_dimensions(data)
+    if metadata is None:
+        return False
+    width, height, image_format, png_chunks = metadata
+    if width < 32 or height < 32 or width * height < 1024:
+        return False
+    if image_format == "png" and png_chunks is not None and _png_is_fully_transparent(png_chunks) is True:
+        return False
+    return True
+
+
+def _drawing_anchors(
+    archive: ZipFile,
+    sheet_part: str,
+    sheet_root: ElementTree.Element,
+) -> tuple[dict[int, set[int]], dict[int, set[int]]]:
     sheet_relationships = _relationships(archive, sheet_part)
     anchors: dict[int, set[int]] = {}
+    invalid_anchors: dict[int, set[int]] = {}
+    image_validity: dict[str, bool] = {}
     for drawing_element in sheet_root.findall(f".//{{{MAIN_NS}}}drawing"):
         relationship_id = drawing_element.get(f"{{{OFFICE_REL_NS}}}id")
         relationship = sheet_relationships.get(relationship_id or "")
@@ -1312,8 +1892,45 @@ def _drawing_anchors(archive: ZipFile, sheet_part: str, sheet_root: ElementTree.
                     continue
                 excel_row = int(row_element.text or "0") + 1
                 column = int(column_element.text or "0")
-                anchors.setdefault(excel_row, set()).add(column)
-    return anchors
+                if image_part not in image_validity:
+                    image_validity[image_part] = _usable_product_image(archive.read(image_part))
+                usable = image_validity[image_part]
+                target = anchors if usable else invalid_anchors
+                target.setdefault(excel_row, set()).add(column)
+    return anchors, invalid_anchors
+
+
+def _cell_coordinates(cell_reference: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"\$?([A-Za-z]+)\$?(\d+)", cell_reference.strip())
+    if match is None:
+        return None
+    return int(match.group(2)), _column_index(match.group(1))
+
+
+def _sheet_hyperlinks(
+    archive: ZipFile,
+    sheet_part: str,
+    sheet_root: ElementTree.Element,
+) -> dict[int, dict[int, str]]:
+    relationships = _relationships(archive, sheet_part)
+    result: dict[int, dict[int, str]] = {}
+    for hyperlink in sheet_root.findall(f".//{{{MAIN_NS}}}hyperlink"):
+        relationship_id = hyperlink.get(f"{{{OFFICE_REL_NS}}}id")
+        relationship = relationships.get(relationship_id or "")
+        if relationship is None or not relationship[1].endswith("/hyperlink"):
+            continue
+        target = relationship[0]
+        cell_range = (hyperlink.get("ref") or "").split(":", 1)
+        start = _cell_coordinates(cell_range[0]) if cell_range else None
+        end = _cell_coordinates(cell_range[-1]) if cell_range else None
+        if start is None or end is None:
+            continue
+        start_row, start_column = start
+        end_row, end_column = end
+        for row_number in range(min(start_row, end_row), max(start_row, end_row) + 1):
+            for column in range(min(start_column, end_column), max(start_column, end_column) + 1):
+                result.setdefault(row_number, {})[column] = target
+    return result
 
 
 def _find_header_row(rows: dict[int, dict[int, Any]], anchor: str) -> int | None:
@@ -1345,7 +1962,8 @@ def _extract_sheet(
         return [], []
     maximum_column = max(header_cells)
     headers = [str(header_cells.get(column, "")).strip() for column in range(maximum_column + 1)]
-    image_anchors = _drawing_anchors(archive, sheet_part, sheet_root)
+    image_anchors, invalid_image_anchors = _drawing_anchors(archive, sheet_part, sheet_root)
+    hyperlink_targets = _sheet_hyperlinks(archive, sheet_part, sheet_root)
     records: list[RowRecord] = []
     for row_number in sorted(number for number in cells_by_row if number > header_row):
         cells = cells_by_row[row_number]
@@ -1367,6 +1985,16 @@ def _extract_sheet(
             for column in image_columns
             if 0 <= column < len(headers) and headers[column]
         )
+        invalid_image_headers = frozenset(
+            headers[column]
+            for column in invalid_image_anchors.get(row_number, set())
+            if 0 <= column < len(headers) and headers[column]
+        )
+        hyperlinks = {
+            header: hyperlink_targets.get(row_number, {}).get(column, "")
+            for column, header in enumerate(headers)
+            if header and hyperlink_targets.get(row_number, {}).get(column)
+        }
         records.append(
             RowRecord(
                 sheet=sheet_name,
@@ -1375,7 +2003,9 @@ def _extract_sheet(
                 image_embedded=bool(image_columns),
                 image_headers=image_headers,
                 image_columns=image_columns,
+                invalid_image_headers=invalid_image_headers,
                 formulas=formulas,
+                hyperlinks=hyperlinks,
             )
         )
     return headers, records
@@ -1436,6 +2066,7 @@ def extract_workbook_model(path: str | Path) -> WorkbookModel:
         rows=records,
         mode=task_fields.get("模式"),
         task_fields=task_fields,
+        hyperlinks_checked=True,
     )
 
 

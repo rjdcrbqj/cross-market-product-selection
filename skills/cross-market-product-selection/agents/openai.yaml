@@ -1,4 +1,4 @@
 interface:
   display_name: "通用跨市场选品与货源匹配"
-  short_description: "确认外观、功能和目标价格后，完成 Amazon、1688 选品与中文 Excel 交付"
-  default_prompt: "使用 $cross-market-product-selection，先用中文确认目标产品外观、功能、价格和排除项，再核验实际主图与证据，按销量40%、价格40%、评价20%评分，生成嵌入商品主图的中文 Excel。"
+  short_description: "确认外观、功能和目标价格后，逐项核验并交付带图片与可点击链接的中文 Excel"
+  default_prompt: "使用 $cross-market-product-selection，先用中文确认目标产品实际参考图，并编号冻结外观、功能、排除项和两侧价格偏差；再用实际主图及详情证据逐项核验。候选表不得混入已淘汰，每个候选嵌入商品主图，全部 URL 单击可打开；只对严格合格项按销量40%、价格40%、评价20%评分并生成中文 Excel。"

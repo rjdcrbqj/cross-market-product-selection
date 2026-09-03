@@ -30,6 +30,8 @@ def workbook(rows=(), *, mode="Amazon", task_fields=None, headers=None):
         "价格权重": 0.4,
         "评价权重": 0.2,
         "评价满分星级": 5,
+        "目标售价": 150,
+        "目标成本": 100,
     }
     if task_fields:
         fixed_task_fields.update(task_fields)
