@@ -31,7 +31,7 @@ export const MATCH_HEADERS = [
   "状态", "模式", "目标产品ID", "排名", "记录/配对ID", "Amazon商品图片", "Amazon对比图片", "1688商品图片", "1688对比图片", "站点", "Amazon ASIN",
   "Amazon变体/SKU", "1688商品ID", "1688 SKU/规格", "供应商ID", "Amazon商品标题", "1688商品标题",
   "Amazon链接", "1688链接", "Amazon主图链接", "Amazon对比图链接", "1688主图链接", "1688对比图链接", "供应商主页", "产品本体门槛", "外观门槛",
-  "功能门槛", "价格/MOQ门槛", "采购数量档位", "MOQ", "阶梯价", "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛",
+  "功能门槛", "价格/MOQ门槛", "目标成本", "实际单价", "成本币种", "采购数量档位", "MOQ", "阶梯价", "详情身份门槛", "供应商门槛", "生产能力门槛", "ODM/OEM/定制门槛",
   "证据一致性门槛", "外观逐项核验", "功能逐项核验", "市场机会得分", "市场机会结论", "市场机会证据",
   "供应能力得分", "供应能力结论", "供应能力证据", "匹配质量得分", "匹配质量结论", "匹配质量证据",
   "最终配对得分", "生产能力证据", "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径",
@@ -60,7 +60,7 @@ const PLATFORM_SCORE_HEADERS = new Set([...AMAZON_SCORE_HEADERS, ...SUPPLY_SCORE
 export const TARGET_HEADERS = [
   "目标产品ID", "目标产品名称", "用户确认状态", "视觉对标模式", "参考图1链接", "参考图2链接", "必需视图",
   "外观必须特点", "允许变化", "外观排除项", "必须功能", "可选功能", "排除功能", "Amazon目标售价",
-  "Amazon价格允许偏差", "Amazon同类均价", "Amazon同类均价最低样本数", "1688目标成本", "1688价格允许偏差",
+  "Amazon价格允许偏差", "Amazon同类均价", "Amazon同类均价最低样本数", "Amazon目标站点", "1688目标成本", "1688价格允许偏差",
   "采购数量档位", "目标严格合格数量", "Amazon目标币种", "1688成本币种",
 ];
 
@@ -309,7 +309,7 @@ function buildTargetSheet(workbook) {
     sheet,
     TARGET_HEADERS,
     "目标产品合同",
-    "每个目标产品独立冻结参考图、必需视图、外观/功能门槛、目标价格与 Top-N；一行一产品。",
+    "每个目标产品独立冻结参考图、必需视图、外观/功能门槛、Amazon目标站点、目标价格与 Top-N；一行一产品。",
     "TargetProductsTable",
   );
   setSemanticFormats(sheet, TARGET_HEADERS);
@@ -327,7 +327,7 @@ function buildPriceSheet(workbook) {
     sheet,
     PRICE_HEADERS,
     "Amazon 同类价格基准",
-    "只有产品本体、外观和功能都通过的可追溯样本才能纳入；同一跨站产品组在每个目标内只计一次。",
+    "只有目标站点内且产品本体、外观和功能都通过的可追溯样本才能纳入；同一商品和跨站产品组在每个目标内各只计一次。",
     "PriceBenchmarksTable",
   );
   setSemanticFormats(sheet, PRICE_HEADERS);
@@ -463,6 +463,7 @@ function targetScenarioValues(mode, target) {
     "Amazon价格允许偏差": mode === "1688" ? "" : 0.2,
     "Amazon同类均价": mode === "1688" ? "" : target.amazonAverage,
     "Amazon同类均价最低样本数": mode === "1688" ? "" : 5,
+    "Amazon目标站点": mode === "1688" ? "" : "DE",
     "1688目标成本": mode === "Amazon" ? "" : target.supplyTarget,
     "1688价格允许偏差": mode === "Amazon" ? "" : 0.2,
     "采购数量档位": mode === "Amazon" ? "" : "1000件",
@@ -527,6 +528,10 @@ function strictScenarioValues(mode, scenario, target, targetIndex) {
   if (targetIndex === 0 && scenario === "production-link") values["生产能力证据"] = values["1688链接"];
   if (targetIndex === 0 && scenario === "missing-production") values["生产能力证据"] = "";
   if (targetIndex === 0 && scenario === "missing-homepage") values["供应商主页"] = "";
+  if (targetIndex === 0 && scenario === "tier-mismatch") values["采购数量档位"] = "1件";
+  if (targetIndex === 0 && scenario === "tier-price-mismatch") {
+    values["阶梯价"] = `500件=${target.supplyTarget + 10} CNY/件；1000件=999 CNY/件`;
+  }
   return values;
 }
 
@@ -564,8 +569,13 @@ export async function createScenario(templatePath, outputPath, mode, scenario = 
       for (let sampleIndex = 0; sampleIndex < 5; sampleIndex += 1) {
         const rowNumber = 4 + targetIndex * 5 + sampleIndex;
         writeValues(priceSheet, PRICE_HEADERS, rowNumber, {
-          "目标产品ID": target.id, "平台": "Amazon", "样本商品ID": `${target.id}-SAMPLE-${sampleIndex + 1}`,
-          "跨站产品组ID": `${target.id}-GROUP-${sampleIndex + 1}`, "站点": "DE", "样本状态": "纳入",
+          "目标产品ID": target.id, "平台": "Amazon",
+          "样本商品ID": scenario === "duplicate-price-product" && targetIndex === 0
+            ? `${target.id}-SAME-PRODUCT`
+            : `${target.id}-SAMPLE-${sampleIndex + 1}`,
+          "跨站产品组ID": `${target.id}-GROUP-${sampleIndex + 1}`,
+          "站点": scenario === "price-site-mismatch" && targetIndex === 0 && sampleIndex === 0 ? "US" : "DE",
+          "样本状态": "纳入",
           "产品本体门槛": "通过", "外观门槛": "通过", "功能门槛": "通过", "标准价格": target.amazonAverage,
           "标准币种": "CNY", "来源链接": `https://www.amazon.de/dp/${target.id}S${sampleIndex + 1}`,
           "获取时间": "2026-09-04T10:00:00+08:00", "排除原因": "",

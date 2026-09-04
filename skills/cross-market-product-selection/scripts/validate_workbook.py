@@ -242,6 +242,7 @@ MULTI_PRODUCT_REQUIRED_HEADERS = {
         "Amazon价格允许偏差",
         "Amazon同类均价",
         "Amazon同类均价最低样本数",
+        "Amazon目标站点",
         "1688目标成本",
         "1688价格允许偏差",
         "采购数量档位",
@@ -280,6 +281,9 @@ MULTI_PRODUCT_REQUIRED_HEADERS = {
         "1688对比图片",
         "Amazon对比图链接",
         "1688对比图链接",
+        "目标成本",
+        "实际单价",
+        "成本币种",
         "采购数量档位",
         "MOQ",
         "阶梯价",
@@ -290,6 +294,7 @@ MULTI_PRODUCT_REQUIRED_HEADERS = {
         "1688对比图片",
         "Amazon对比图链接",
         "1688对比图链接",
+        "成本币种",
         "采购数量档位",
         "MOQ",
         "阶梯价",
@@ -327,6 +332,67 @@ def _issue(code: str, message: str, row: RowRecord | None = None, sheet: str | N
 
 def _normalize_header(value: str) -> str:
     return re.sub(r"\s+", "", str(value)).casefold()
+
+
+AMAZON_EU_SITES = frozenset({"DE", "FR", "IT", "ES", "UK", "NL", "SE", "PL", "BE"})
+AMAZON_SITE_ALIASES = {
+    "de": "DE",
+    "德国": "DE",
+    "amazon.de": "DE",
+    "fr": "FR",
+    "法国": "FR",
+    "amazon.fr": "FR",
+    "it": "IT",
+    "意大利": "IT",
+    "amazon.it": "IT",
+    "es": "ES",
+    "西班牙": "ES",
+    "amazon.es": "ES",
+    "uk": "UK",
+    "gb": "UK",
+    "英国": "UK",
+    "amazon.co.uk": "UK",
+    "nl": "NL",
+    "荷兰": "NL",
+    "amazon.nl": "NL",
+    "se": "SE",
+    "瑞典": "SE",
+    "amazon.se": "SE",
+    "pl": "PL",
+    "波兰": "PL",
+    "amazon.pl": "PL",
+    "be": "BE",
+    "比利时": "BE",
+    "amazon.com.be": "BE",
+    "us": "US",
+    "美国": "US",
+    "amazon.com": "US",
+    "ca": "CA",
+    "加拿大": "CA",
+    "amazon.ca": "CA",
+    "jp": "JP",
+    "日本": "JP",
+    "amazon.co.jp": "JP",
+}
+
+
+def _amazon_site_scope(value: Any) -> frozenset[str]:
+    if _blank(value):
+        return frozenset()
+    tokens = [token for token in re.split(r"[,，;；/|、\s]+", str(value).strip()) if token]
+    sites: set[str] = set()
+    for token in tokens:
+        normalized = _normalize_header(token)
+        if normalized in {"eu", "europe", "欧洲", "欧洲综合", "亚马逊欧洲"}:
+            sites.update(AMAZON_EU_SITES)
+            continue
+        alias = AMAZON_SITE_ALIASES.get(normalized)
+        if alias is not None:
+            sites.add(alias)
+            continue
+        if re.fullmatch(r"[a-z]{2,3}", normalized):
+            sites.add(normalized.upper())
+    return frozenset(sites)
 
 
 def _normalized_mode(mode: str | None) -> str | None:
@@ -581,6 +647,69 @@ def _finite_number(value: Any) -> float | None:
     if number is None or not math.isfinite(number):
         return None
     return number
+
+
+def _procurement_quantity(value: Any) -> float | None:
+    numeric = _finite_number(value)
+    if numeric is not None:
+        return numeric if numeric > 0 else None
+    if _blank(value):
+        return None
+    text = str(value).strip().replace(",", "").replace("，", "")
+    match = re.fullmatch(
+        r"(?:≥|>=)?\s*(\d+(?:\.\d+)?)\s*(?:件|个|台|套|pcs?|pieces?|units?)?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    quantity = float(match.group(1))
+    return quantity if math.isfinite(quantity) and quantity > 0 else None
+
+
+def _currency_code(value: Any) -> str | None:
+    if _blank(value):
+        return None
+    normalized = _normalize_header(str(value))
+    aliases = {
+        "cny": "CNY",
+        "rmb": "CNY",
+        "人民币": "CNY",
+        "元": "CNY",
+        "eur": "EUR",
+        "欧元": "EUR",
+        "usd": "USD",
+        "美元": "USD",
+        "gbp": "GBP",
+        "英镑": "GBP",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    return normalized.upper() if re.fullmatch(r"[a-z]{3}", normalized) else None
+
+
+def _tier_price_entries(value: Any) -> list[tuple[float, float, str | None]] | None:
+    if _blank(value):
+        return []
+    entries: list[tuple[float, float, str | None]] = []
+    pattern = re.compile(
+        r"\s*(\d[\d,，]*(?:\.\d+)?)\s*(?:件|个|台|套|pcs?|pieces?|units?)?"
+        r"\s*[=＝:：]\s*(\d[\d,，]*(?:\.\d+)?)\s*"
+        r"([A-Za-z]{3}|人民币|元)?\s*/\s*(?:件|个|台|套|pcs?|pieces?|units?)\s*",
+        flags=re.IGNORECASE,
+    )
+    for segment in re.split(r"[；;\n]+", str(value)):
+        if not segment.strip():
+            continue
+        match = pattern.fullmatch(segment)
+        if match is None:
+            return None
+        quantity = float(match.group(1).replace(",", "").replace("，", ""))
+        price = float(match.group(2).replace(",", "").replace("，", ""))
+        if not all(math.isfinite(number) and number > 0 for number in (quantity, price)):
+            return None
+        entries.append((quantity, price, _currency_code(match.group(3))))
+    return entries
 
 
 def _task_value(task_fields: dict[str, Any], name: str) -> Any:
@@ -1031,8 +1160,10 @@ def _validate_target_profiles(
                 missing.append("Amazon同类均价")
             if minimum is None or not minimum.is_integer() or minimum < 5:
                 missing.append("Amazon同类均价最低样本数≥5")
-        if "1688" in sides and _blank(_values_for(profile, ("采购数量档位",))):
-            missing.append("采购数量档位")
+            if not _amazon_site_scope(_values_for(profile, ("Amazon目标站点",))):
+                missing.append("Amazon目标站点")
+        if "1688" in sides and _procurement_quantity(_values_for(profile, ("采购数量档位",))) is None:
+            missing.append("采购数量档位（正数数量）")
         result_limit = _finite_number(_values_for(profile, ("目标严格合格数量",)))
         if result_limit is None or not result_limit.is_integer() or result_limit < 1:
             missing.append("目标严格合格数量")
@@ -1076,6 +1207,7 @@ def _validate_price_benchmarks(
     issues: list[ValidationIssue] = []
     included: dict[str, list[float]] = {}
     seen_groups: set[tuple[str, str]] = set()
+    seen_products: set[tuple[str, str]] = set()
     for row in model.rows:
         if row.sheet != "价格基准" or _row_is_blank(row):
             continue
@@ -1110,11 +1242,34 @@ def _validate_price_benchmarks(
         if not valid:
             issues.append(_issue("PRICE_BENCHMARK_SAMPLE_INVALID", "纳入均价的样本必须有合格门槛、唯一产品组、统一币种、价格和可追溯来源", row))
             continue
+        allowed_sites = _amazon_site_scope(_values_for(profiles[target_id], ("Amazon目标站点",)))
+        sample_sites = _amazon_site_scope(_values_for(row, ("站点",)))
+        if len(sample_sites) != 1 or not allowed_sites or not sample_sites.issubset(allowed_sites):
+            issues.append(
+                _issue(
+                    "PRICE_BENCHMARK_SITE_OUT_OF_SCOPE",
+                    "Amazon 均价样本的站点必须属于该目标产品已确认的目标站点范围",
+                    row,
+                )
+            )
+            continue
         group_id = _normalize_header(str(group_value))
+        product_id = _normalize_header(str(product_value))
         group_key = (target_id, group_id)
+        product_key = (target_id, product_id)
+        if product_key in seen_products:
+            issues.append(
+                _issue(
+                    "PRICE_BENCHMARK_DUPLICATE",
+                    "同一目标产品的样本商品只能计入均价一次，不能通过更换跨站产品组 ID 重复计数",
+                    row,
+                )
+            )
+            continue
         if group_key in seen_groups:
             issues.append(_issue("PRICE_BENCHMARK_DUPLICATE", "同一目标产品的跨站产品组只能计入均价一次", row))
             continue
+        seen_products.add(product_key)
         seen_groups.add(group_key)
         included.setdefault(target_id, []).append(price)
 
@@ -1297,7 +1452,11 @@ def _validate_strict_multi_view(
     return issues
 
 
-def _validate_strict_supply_price_tier(row: RowRecord, mode: str) -> list[ValidationIssue]:
+def _validate_strict_supply_price_tier(
+    row: RowRecord,
+    mode: str,
+    profile: RowRecord | None,
+) -> list[ValidationIssue]:
     if "1688" not in _row_platform_sides(row, mode):
         return []
     sku = _values_for(row, ("1688 SKU/规格", "SKU/规格"))
@@ -1312,7 +1471,76 @@ def _validate_strict_supply_price_tier(row: RowRecord, mode: str) -> list[Valida
                 row,
             )
         ]
-    return []
+    issues: list[ValidationIssue] = []
+    target_quantity = _procurement_quantity(
+        _values_for(profile, ("采购数量档位",)) if profile is not None else None
+    )
+    row_quantity = _procurement_quantity(procurement_tier)
+    if (
+        target_quantity is None
+        or row_quantity is None
+        or abs(row_quantity - target_quantity) > 1e-9
+    ):
+        issues.append(
+            _issue(
+                "STRICT_SUPPLY_PROCUREMENT_TIER_MISMATCH",
+                "1688 严格行的采购数量档位必须与目标产品合同一致",
+                row,
+            )
+        )
+    if target_quantity is not None and moq > target_quantity + 1e-9:
+        issues.append(
+            _issue(
+                "STRICT_SUPPLY_MOQ_EXCEEDS_TIER",
+                "1688 严格行的 MOQ 不能高于目标采购数量",
+                row,
+            )
+        )
+
+    entries = _tier_price_entries(tier_price)
+    matching_entries = (
+        []
+        if entries is None or target_quantity is None
+        else [entry for entry in entries if abs(entry[0] - target_quantity) <= 1e-9]
+    )
+    if len(matching_entries) != 1:
+        issues.append(
+            _issue(
+                "STRICT_SUPPLY_TIER_PRICE_MISMATCH",
+                "1688 严格行的阶梯价必须且只能包含一个与目标采购数量对应的有效报价",
+                row,
+            )
+        )
+        return issues
+
+    _, expected_price, tier_currency = matching_entries[0]
+    actual_price = _finite_number(_values_for(row, ("实际单价", "1688实际单价")))
+    if actual_price is None or abs(actual_price - expected_price) > 0.01 + 1e-12:
+        issues.append(
+            _issue(
+                "STRICT_SUPPLY_TIER_PRICE_MISMATCH",
+                "1688 严格行的实际单价必须等于目标采购档位对应的阶梯价",
+                row,
+            )
+        )
+
+    profile_currency = _currency_code(
+        _values_for(profile, ("1688成本币种",)) if profile is not None else None
+    )
+    row_currency = _currency_code(_values_for(row, ("成本币种", "1688成本币种")))
+    if (
+        profile_currency is None
+        or row_currency != profile_currency
+        or tier_currency != profile_currency
+    ):
+        issues.append(
+            _issue(
+                "STRICT_SUPPLY_TIER_CURRENCY_MISMATCH",
+                "1688 严格行的成本币种、阶梯价币种与目标产品合同必须一致",
+                row,
+            )
+        )
+    return issues
 
 
 def _validate_visual_evidence_duplicates(
@@ -2061,7 +2289,7 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
         issues.extend(_validate_strict_checklists(row, row_appearance_ids, row_function_ids, effective_mode))
         issues.extend(_validate_strict_multi_view(row, effective_mode, profile))
         if _multi_product_enabled(model):
-            issues.extend(_validate_strict_supply_price_tier(row, effective_mode))
+            issues.extend(_validate_strict_supply_price_tier(row, effective_mode, profile))
         if row.sheet != "货源匹配" and not _multi_product_enabled(model):
             issues.extend(_validate_strict_price_range(row, effective_mode, tolerances, model.task_fields))
 

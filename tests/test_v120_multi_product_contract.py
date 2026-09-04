@@ -7,7 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = ROOT / "skills" / "cross-market-product-selection" / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from validate_workbook import RowRecord, WorkbookModel, validate_workbook_model
+from validate_workbook import (
+    MULTI_PRODUCT_REQUIRED_HEADERS,
+    RowRecord,
+    WorkbookModel,
+    validate_workbook_model,
+)
 
 
 SHEETS = {
@@ -56,6 +61,7 @@ def target_profile(
     amazon_target: float = 450,
     amazon_tolerance: float = 0.2,
     amazon_average: float = 450,
+    amazon_sites: str = "DE",
     sample_minimum: int = 5,
     supply_target: float = 150,
     supply_tolerance: float = 0.2,
@@ -83,6 +89,7 @@ def target_profile(
         "Amazon价格允许偏差": amazon_tolerance,
         "Amazon同类均价": amazon_average,
         "Amazon同类均价最低样本数": sample_minimum,
+        "Amazon目标站点": amazon_sites,
         "1688目标成本": supply_target,
         "1688价格允许偏差": supply_tolerance,
         "采购数量档位": "1000件",
@@ -95,6 +102,7 @@ def target_profile(
         values["Amazon价格允许偏差"] = ""
         values["Amazon同类均价"] = ""
         values["Amazon同类均价最低样本数"] = ""
+        values["Amazon目标站点"] = ""
     return RowRecord("目标产品", row, values)
 
 
@@ -225,7 +233,38 @@ def pending_supply_row(target_id: str, *, actual: float = 60) -> RowRecord:
     return record
 
 
+def strict_supply_row(
+    target_id: str,
+    *,
+    actual: float = 150,
+    procurement_tier: str = "1000件",
+    moq: float = 500,
+    tier_price: str = "500件=160 CNY/件；1000件=150 CNY/件",
+) -> RowRecord:
+    row = pending_supply_row(target_id, actual=actual)
+    row.values.update(
+        {
+            "状态": "严格合格",
+            "产品本体门槛": "通过",
+            "外观门槛": "通过",
+            "功能门槛": "通过",
+            "供应商门槛": "通过",
+            "生产能力门槛": "通过",
+            "ODM/OEM/定制门槛": "通过",
+            "证据一致性门槛": "通过",
+            "采购数量档位": procurement_tier,
+            "MOQ": moq,
+            "阶梯价": tier_price,
+            "成本币种": "CNY",
+        }
+    )
+    return row
+
+
 class MultiProductContractTests(unittest.TestCase):
+    def test_strict_result_requires_supply_currency_header(self):
+        self.assertIn("成本币种", MULTI_PRODUCT_REQUIRED_HEADERS["严格结果"])
+
     def test_multi_product_rows_require_a_known_target_product_id(self):
         profile = target_profile("P-A")
         samples = price_samples("P-A", [450, 450, 450, 450, 450])
@@ -276,6 +315,36 @@ class MultiProductContractTests(unittest.TestCase):
         self.assertIn("PRICE_BENCHMARK_INSUFFICIENT", codes)
         self.assertIn("PRICE_BENCHMARK_AVERAGE_MISMATCH", codes)
 
+    def test_amazon_peer_average_rejects_same_product_under_different_group_ids(self):
+        profile = target_profile("P-A", amazon_average=400)
+        samples = price_samples("P-A", [400] * 5)
+        for sample in samples:
+            sample.values["样本商品ID"] = "B0SAMEPRODUCT"
+
+        codes = issue_codes(model([profile, *samples, strict_amazon_row("P-A")]))
+
+        self.assertIn("PRICE_BENCHMARK_DUPLICATE", codes)
+        self.assertIn("PRICE_BENCHMARK_INSUFFICIENT", codes)
+
+    def test_amazon_peer_average_rejects_samples_outside_target_sites(self):
+        profile = target_profile("P-A", amazon_average=450, amazon_sites="DE、FR")
+        samples = price_samples("P-A", [450] * 5)
+        samples[0].values["站点"] = "US"
+
+        codes = issue_codes(model([profile, *samples, strict_amazon_row("P-A")]))
+
+        self.assertIn("PRICE_BENCHMARK_SITE_OUT_OF_SCOPE", codes)
+        self.assertIn("PRICE_BENCHMARK_INSUFFICIENT", codes)
+
+    def test_amazon_target_profile_requires_machine_readable_site_scope(self):
+        profile = target_profile("P-A", amazon_sites="")
+        samples = price_samples("P-A", [450] * 5)
+
+        self.assertIn(
+            "TARGET_PROFILE_INCOMPLETE",
+            issue_codes(model([profile, *samples, strict_amazon_row("P-A")])),
+        )
+
     def test_known_1688_price_below_the_target_cost_band_cannot_stay_pending(self):
         profile = target_profile("P-S", mode="1688", supply_target=150, supply_tolerance=0.2)
         row = pending_supply_row("P-S", actual=60)
@@ -300,6 +369,46 @@ class MultiProductContractTests(unittest.TestCase):
         )
 
         self.assertIn("STRICT_SUPPLY_PRICE_TIER_MISSING", issue_codes(model([profile, row], mode="1688")))
+
+    def test_strict_1688_procurement_tier_must_match_target_profile(self):
+        profile = target_profile("P-S", mode="1688", supply_target=150, supply_tolerance=0.2)
+        row = strict_supply_row("P-S", procurement_tier="1件", moq=1)
+
+        self.assertIn(
+            "STRICT_SUPPLY_PROCUREMENT_TIER_MISMATCH",
+            issue_codes(model([profile, row], mode="1688")),
+        )
+
+    def test_strict_1688_moq_cannot_exceed_target_procurement_quantity(self):
+        profile = target_profile("P-S", mode="1688", supply_target=150, supply_tolerance=0.2)
+        row = strict_supply_row("P-S", moq=1001)
+
+        self.assertIn(
+            "STRICT_SUPPLY_MOQ_EXCEEDS_TIER",
+            issue_codes(model([profile, row], mode="1688")),
+        )
+
+    def test_strict_1688_actual_price_must_equal_target_tier_price(self):
+        profile = target_profile("P-S", mode="1688", supply_target=150, supply_tolerance=0.2)
+        row = strict_supply_row(
+            "P-S",
+            actual=150,
+            tier_price="500件=160 CNY/件；1000件=999 CNY/件",
+        )
+
+        self.assertIn(
+            "STRICT_SUPPLY_TIER_PRICE_MISMATCH",
+            issue_codes(model([profile, row], mode="1688")),
+        )
+
+    def test_strict_1688_tier_price_requires_explicit_price_unit(self):
+        profile = target_profile("P-S", mode="1688", supply_target=150, supply_tolerance=0.2)
+        row = strict_supply_row("P-S", tier_price="1000件=150 CNY")
+
+        self.assertIn(
+            "STRICT_SUPPLY_TIER_PRICE_MISMATCH",
+            issue_codes(model([profile, row], mode="1688")),
+        )
 
     def test_strict_multi_view_requires_two_large_images_and_structured_comparison(self):
         profile = target_profile("P-V", visual_mode="严格多视图", amazon_average=450)

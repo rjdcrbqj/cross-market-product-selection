@@ -110,6 +110,10 @@ class RealTemplateIntegrationTests(unittest.TestCase):
             ("1688", "missing-production", "PRODUCTION_EVIDENCE_MISSING"),
             ("1688", "missing-homepage", "SUPPLIER_PROFILE_MISSING"),
             ("联合", "missing-image", "STRICT_IMAGE_MISSING"),
+            ("Amazon", "duplicate-price-product", "PRICE_BENCHMARK_DUPLICATE"),
+            ("Amazon", "price-site-mismatch", "PRICE_BENCHMARK_SITE_OUT_OF_SCOPE"),
+            ("1688", "tier-mismatch", "STRICT_SUPPLY_PROCUREMENT_TIER_MISMATCH"),
+            ("1688", "tier-price-mismatch", "STRICT_SUPPLY_TIER_PRICE_MISMATCH"),
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             for mode, scenario, expected_code in cases:

@@ -28,14 +28,17 @@ class SkillContractTests(unittest.TestCase):
         prompt = (SKILL_DIR / "references" / "多产品提示词模板.md").read_text(encoding="utf-8")
         ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
-        for phrase in ["多产品", "目标产品ID", "每个目标产品", "严格多视图", "Amazon同类均价"]:
+        for phrase in ["多产品", "目标产品ID", "每个目标产品", "严格多视图", "Amazon同类均价", "Amazon目标站点"]:
             self.assertIn(phrase, core)
         self.assertIn("一行一个目标产品", intake)
         self.assertIn("候选可见事实", evidence)
-        self.assertIn("不得低于该目标产品的合格同类均价", amazon)
-        self.assertIn("价格带下限", source)
-        self.assertIn("固定九表", excel)
-        for phrase in ["产品A", "产品B", "不足不凑数", "必须先输出冻结合同"]:
+        for phrase in ["不得低于该目标产品的合格同类均价", "样本商品ID", "跨站产品组ID", "Amazon目标站点"]:
+            self.assertIn(phrase, amazon)
+        for phrase in ["价格带下限", "数量=单价 币种/单位"]:
+            self.assertIn(phrase, source)
+        for phrase in ["固定九表", "Amazon目标站点"]:
+            self.assertIn(phrase, excel)
+        for phrase in ["产品A", "产品B", "不足不凑数", "必须先输出冻结合同", "Amazon 目标站点"]:
             self.assertIn(phrase, prompt)
         self.assertNotIn("P10", prompt)
         self.assertIn("多产品", ui)
@@ -104,6 +107,9 @@ class SkillContractTests(unittest.TestCase):
             "多产品",
             "目标产品ID",
             "固定九表",
+            "Amazon目标站点",
+            "样本商品ID",
+            "数量=单价 币种/单位",
             "确认目标产品外观",
             "目标售价",
             "目标成本",
