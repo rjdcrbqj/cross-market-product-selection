@@ -46,17 +46,26 @@ class RealTemplateIntegrationTests(unittest.TestCase):
                     issues = validate_workbook_model(model)
                     self.assertEqual(issues, [])
                     strict = [row for row in model.rows if row.sheet == "严格结果"]
-                    self.assertEqual(len(strict), 1)
-                    expected_images = 2 if mode == "联合" else 1
-                    self.assertEqual(len(strict[0].image_headers), expected_images)
+                    self.assertEqual(len(strict), 2)
+                    self.assertEqual({row.values["目标产品ID"] for row in strict}, {"P-A", "P-B"})
+                    expected_images = 4 if mode == "联合" else 2
+                    for row in strict:
+                        self.assertEqual(len(row.image_headers), expected_images)
+                        self.assertTrue(all(width >= 240 and height >= 240 for width, height in row.image_dimensions.values()))
                     candidates = [row for row in model.rows if row.sheet == candidate_sheet[mode]]
-                    self.assertEqual(len(candidates), 1)
-                    self.assertEqual(candidates[0].values["状态"], "严格合格")
-                    self.assertEqual(len(candidates[0].image_headers), expected_images)
-                    for header, value in candidates[0].values.items():
-                        if isinstance(value, str) and value.startswith(("http://", "https://")):
-                            with self.subTest(mode=mode, header=header):
-                                self.assertEqual(candidates[0].hyperlinks.get(header), value)
+                    self.assertEqual(len(candidates), 2)
+                    for candidate in candidates:
+                        self.assertEqual(candidate.values["状态"], "严格合格")
+                        self.assertEqual(len(candidate.image_headers), expected_images)
+                        for header, value in candidate.values.items():
+                            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                                with self.subTest(mode=mode, header=header):
+                                    self.assertEqual(candidate.hyperlinks.get(header), value)
+                    profiles = [row for row in model.rows if row.sheet == "目标产品"]
+                    self.assertEqual({row.values["目标产品ID"] for row in profiles}, {"P-A", "P-B"})
+                    if mode != "1688":
+                        samples = [row for row in model.rows if row.sheet == "价格基准"]
+                        self.assertEqual(len(samples), 10)
 
     def test_real_template_scenarios_preserve_platform_score_formulas(self):
         amazon_score_fields = {
@@ -81,8 +90,17 @@ class RealTemplateIntegrationTests(unittest.TestCase):
                 with self.subTest(mode=mode):
                     workbook_path = self.create_scenario(temporary_directory, mode)
                     model = extract_workbook_model(workbook_path)
-                    strict = next(row for row in model.rows if row.sheet == "严格结果")
-                    self.assertEqual(set(strict.formulas), expected_fields)
+                    strict_rows = [row for row in model.rows if row.sheet == "严格结果"]
+                    self.assertEqual(len(strict_rows), 2)
+                    for strict in strict_rows:
+                        self.assertEqual(set(strict.formulas), expected_fields)
+                        sales_formulas = [formula for formula in strict.formulas.values() if "COUNTIFS" in formula]
+                        expected_sales_formula_count = 2 if mode == "联合" else 1
+                        self.assertEqual(len(sales_formulas), expected_sales_formula_count)
+                        target_column = model.headers["严格结果"].index("目标产品ID")
+                        column_name = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[target_column]
+                        for formula in sales_formulas:
+                            self.assertIn(f"${column_name}$4:${column_name}$103", formula)
 
     def test_real_committed_template_rejects_factory_and_image_counterexamples(self):
         cases = (
@@ -92,6 +110,10 @@ class RealTemplateIntegrationTests(unittest.TestCase):
             ("1688", "missing-production", "PRODUCTION_EVIDENCE_MISSING"),
             ("1688", "missing-homepage", "SUPPLIER_PROFILE_MISSING"),
             ("联合", "missing-image", "STRICT_IMAGE_MISSING"),
+            ("Amazon", "duplicate-price-product", "PRICE_BENCHMARK_DUPLICATE"),
+            ("Amazon", "price-site-mismatch", "PRICE_BENCHMARK_SITE_OUT_OF_SCOPE"),
+            ("1688", "tier-mismatch", "STRICT_SUPPLY_PROCUREMENT_TIER_MISMATCH"),
+            ("1688", "tier-price-mismatch", "STRICT_SUPPLY_TIER_PRICE_MISMATCH"),
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             for mode, scenario, expected_code in cases:

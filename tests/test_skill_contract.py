@@ -15,8 +15,33 @@ class SkillContractTests(unittest.TestCase):
         self.assertNotIn("P10", text)
 
     def test_required_chinese_references_exist(self):
-        for name in ["需求确认与评分.md", "证据质量.md", "Excel输出规范.md"]:
+        for name in ["需求确认与评分.md", "证据质量.md", "Excel输出规范.md", "多产品提示词模板.md"]:
             self.assertTrue((SKILL_DIR / "references" / name).is_file(), name)
+
+    def test_multi_product_agent_contract_is_documented(self):
+        core = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        intake = (SKILL_DIR / "references" / "需求确认与评分.md").read_text(encoding="utf-8")
+        evidence = (SKILL_DIR / "references" / "证据质量.md").read_text(encoding="utf-8")
+        amazon = (SKILL_DIR / "references" / "亚马逊模式.md").read_text(encoding="utf-8")
+        source = (SKILL_DIR / "references" / "1688模式.md").read_text(encoding="utf-8")
+        excel = (SKILL_DIR / "references" / "Excel输出规范.md").read_text(encoding="utf-8")
+        prompt = (SKILL_DIR / "references" / "多产品提示词模板.md").read_text(encoding="utf-8")
+        ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
+
+        for phrase in ["多产品", "目标产品ID", "每个目标产品", "严格多视图", "Amazon同类均价", "Amazon目标站点"]:
+            self.assertIn(phrase, core)
+        self.assertIn("一行一个目标产品", intake)
+        self.assertIn("候选可见事实", evidence)
+        for phrase in ["不得低于该目标产品的合格同类均价", "样本商品ID", "跨站产品组ID", "Amazon目标站点"]:
+            self.assertIn(phrase, amazon)
+        for phrase in ["价格带下限", "数量=单价 币种/单位"]:
+            self.assertIn(phrase, source)
+        for phrase in ["固定九表", "Amazon目标站点"]:
+            self.assertIn(phrase, excel)
+        for phrase in ["产品A", "产品B", "不足不凑数", "必须先输出冻结合同", "Amazon 目标站点"]:
+            self.assertIn(phrase, prompt)
+        self.assertNotIn("P10", prompt)
+        self.assertIn("多产品", ui)
 
     def test_mode_references_encode_source_and_dedup_boundaries(self):
         amazon = (SKILL_DIR / "references" / "亚马逊模式.md").read_text(encoding="utf-8")
@@ -66,19 +91,25 @@ class SkillContractTests(unittest.TestCase):
         for phrase in ["有序来源层级", "推断不得证明任何硬门槛", "字段权威性"]:
             self.assertIn(phrase, evidence)
         for phrase in [
-            "任务说明、亚马逊候选、1688候选、货源匹配、严格结果、待核验、淘汰记录",
+            "任务说明、目标产品、价格基准、亚马逊候选、1688候选、货源匹配、严格结果、待核验、淘汰记录",
             "销量得分、评价数量、价格得分、稳定商品/配对 ID",
             "孤立图片、跨行图片",
         ]:
             self.assertIn(phrase, excel)
 
-    def test_readme_and_ui_explain_v111_behavior(self):
+    def test_readme_and_ui_explain_v120_behavior(self):
         root = SKILL_DIR.parents[1]
         readme = (root / "README.md").read_text(encoding="utf-8")
         ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
         for phrase in [
-            "v1.1.1",
+            "v1.2.0",
+            "多产品",
+            "目标产品ID",
+            "固定九表",
+            "Amazon目标站点",
+            "样本商品ID",
+            "数量=单价 币种/单位",
             "确认目标产品外观",
             "目标售价",
             "目标成本",
@@ -169,6 +200,36 @@ class SkillContractTests(unittest.TestCase):
             "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection",
         ]:
             self.assertIn(phrase, text)
+
+    def test_v120_release_notes_document_multi_product_upgrade_and_installation(self):
+        release = ROOT / "docs" / "releases" / "v1.2.0.md"
+        self.assertTrue(release.is_file(), "缺少 v1.2.0 中文发布说明")
+        text = release.read_text(encoding="utf-8")
+        for phrase in [
+            "## 新增",
+            "## 行为变化",
+            "## 兼容性",
+            "## 安装",
+            "## 验证",
+            "多产品",
+            "目标产品ID",
+            "严格多视图",
+            "Amazon同类均价",
+            "固定九表",
+            "v1.1.1",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection",
+        ]:
+            self.assertIn(phrase, text)
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.0",
+            readme,
+        )
+        self.assertIn(
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection",
+            readme,
+        )
 
     def test_readme_and_release_preserve_install_directory_urls(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
