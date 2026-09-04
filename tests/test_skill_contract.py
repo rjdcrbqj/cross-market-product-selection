@@ -94,13 +94,16 @@ class SkillContractTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, excel)
 
-    def test_readme_and_ui_explain_v111_behavior(self):
+    def test_readme_and_ui_explain_v120_behavior(self):
         root = SKILL_DIR.parents[1]
         readme = (root / "README.md").read_text(encoding="utf-8")
         ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
         for phrase in [
-            "v1.1.1",
+            "v1.2.0",
+            "多产品",
+            "目标产品ID",
+            "固定九表",
             "确认目标产品外观",
             "目标售价",
             "目标成本",
@@ -191,6 +194,36 @@ class SkillContractTests(unittest.TestCase):
             "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection",
         ]:
             self.assertIn(phrase, text)
+
+    def test_v120_release_notes_document_multi_product_upgrade_and_installation(self):
+        release = ROOT / "docs" / "releases" / "v1.2.0.md"
+        self.assertTrue(release.is_file(), "缺少 v1.2.0 中文发布说明")
+        text = release.read_text(encoding="utf-8")
+        for phrase in [
+            "## 新增",
+            "## 行为变化",
+            "## 兼容性",
+            "## 安装",
+            "## 验证",
+            "多产品",
+            "目标产品ID",
+            "严格多视图",
+            "Amazon同类均价",
+            "固定九表",
+            "v1.1.1",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection",
+        ]:
+            self.assertIn(phrase, text)
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.0",
+            readme,
+        )
+        self.assertIn(
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection",
+            readme,
+        )
 
     def test_readme_and_release_preserve_install_directory_urls(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

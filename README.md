@@ -4,18 +4,23 @@
 
 一个任务可以同时录入多个目标产品。每个产品拥有独立`目标产品ID`、参考图、必需视图、外观/功能合同、目标售价/成本、价格基准和目标数量；检索、去重、评分、排名与 Top-N 均按目标产品隔离，不会把不同产品混成一个池。
 
-当前稳定版本：[`v1.1.1`](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.1.1)。
+当前稳定版本：[`v1.2.0`](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.0)。
 
 ## 安装与调用
 
-在 Codex 中新建任务，复制下面的内容安装固定的 v1.1.1：
+在 Codex 中新建任务，复制下面的内容安装固定的 v1.2.0：
+
+```text
+请使用 $skill-installer 安装这个 Skill：
+https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection
+```
+
+需要复现旧行为时，仍可安装历史版本 v1.1.1、v1.1.0 或 v1.0.0：
 
 ```text
 请使用 $skill-installer 安装这个 Skill：
 https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection
 ```
-
-需要复现旧行为时，仍可安装历史版本 v1.1.0 或 v1.0.0：
 
 ```text
 请使用 $skill-installer 安装这个 Skill：
@@ -141,8 +146,8 @@ Amazon价格不得低于当前目标产品的合格同类均价；1688必须绑�
 
 ## 版本
 
-- 稳定版：[v1.1.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection)
-- 历史稳定版：[v1.1.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection)
-- 更早版本：[v1.0.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.0.0/skills/cross-market-product-selection)
+- 稳定版：[v1.2.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection)
+- 历史稳定版：[v1.1.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection)
+- 更早版本：[v1.1.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection)、[v1.0.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.0.0/skills/cross-market-product-selection)
 - 最新开发版：[main](https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cross-market-product-selection)
 - 许可协议：[MIT License](LICENSE)
