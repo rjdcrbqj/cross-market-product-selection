@@ -357,8 +357,9 @@ class V111OutputHardeningTests(unittest.TestCase):
             with self.subTest(sheet=sheet_name):
                 self.assertIn("外观逐项核验", extracted.headers[sheet_name])
                 self.assertIn("功能逐项核验", extracted.headers[sheet_name])
-        self.assertIn("Amazon价格允许偏差", extracted.task_fields)
-        self.assertIn("1688价格允许偏差", extracted.task_fields)
+        self.assertIn("目标产品", extracted.sheets)
+        self.assertIn("Amazon价格允许偏差", extracted.headers["目标产品"])
+        self.assertIn("1688价格允许偏差", extracted.headers["目标产品"])
 
     def test_skill_contract_forbids_title_only_visual_passes_and_requires_clickable_candidate_outputs(self):
         core = (ROOT / "skills" / "cross-market-product-selection" / "SKILL.md").read_text(encoding="utf-8")
@@ -366,11 +367,12 @@ class V111OutputHardeningTests(unittest.TestCase):
 
         for phrase in (
             "逐项核验",
-            "标题或关键词不得作为外观通过证据",
-            "看不到关键结构",
-            "转入待核验",
-            "任务说明中的`目标售价`与`目标成本`是唯一价格基准",
-            "候选表与严格结果分别重算评分",
+            "标题、关键词或复制的模板句不得作为外观通过证据",
+            "严格多视图",
+            "转为待核验",
+            "对应的目标售价或目标成本",
+            "候选表和严格结果都必须通过独立重算",
+            "已知价格越界必须淘汰",
         ):
             self.assertIn(phrase, core)
         for phrase in (

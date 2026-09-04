@@ -15,8 +15,30 @@ class SkillContractTests(unittest.TestCase):
         self.assertNotIn("P10", text)
 
     def test_required_chinese_references_exist(self):
-        for name in ["需求确认与评分.md", "证据质量.md", "Excel输出规范.md"]:
+        for name in ["需求确认与评分.md", "证据质量.md", "Excel输出规范.md", "多产品提示词模板.md"]:
             self.assertTrue((SKILL_DIR / "references" / name).is_file(), name)
+
+    def test_multi_product_agent_contract_is_documented(self):
+        core = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        intake = (SKILL_DIR / "references" / "需求确认与评分.md").read_text(encoding="utf-8")
+        evidence = (SKILL_DIR / "references" / "证据质量.md").read_text(encoding="utf-8")
+        amazon = (SKILL_DIR / "references" / "亚马逊模式.md").read_text(encoding="utf-8")
+        source = (SKILL_DIR / "references" / "1688模式.md").read_text(encoding="utf-8")
+        excel = (SKILL_DIR / "references" / "Excel输出规范.md").read_text(encoding="utf-8")
+        prompt = (SKILL_DIR / "references" / "多产品提示词模板.md").read_text(encoding="utf-8")
+        ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
+
+        for phrase in ["多产品", "目标产品ID", "每个目标产品", "严格多视图", "Amazon同类均价"]:
+            self.assertIn(phrase, core)
+        self.assertIn("一行一个目标产品", intake)
+        self.assertIn("候选可见事实", evidence)
+        self.assertIn("不得低于该目标产品的合格同类均价", amazon)
+        self.assertIn("价格带下限", source)
+        self.assertIn("固定九表", excel)
+        for phrase in ["产品A", "产品B", "不足不凑数", "必须先输出冻结合同"]:
+            self.assertIn(phrase, prompt)
+        self.assertNotIn("P10", prompt)
+        self.assertIn("多产品", ui)
 
     def test_mode_references_encode_source_and_dedup_boundaries(self):
         amazon = (SKILL_DIR / "references" / "亚马逊模式.md").read_text(encoding="utf-8")
@@ -66,7 +88,7 @@ class SkillContractTests(unittest.TestCase):
         for phrase in ["有序来源层级", "推断不得证明任何硬门槛", "字段权威性"]:
             self.assertIn(phrase, evidence)
         for phrase in [
-            "任务说明、亚马逊候选、1688候选、货源匹配、严格结果、待核验、淘汰记录",
+            "任务说明、目标产品、价格基准、亚马逊候选、1688候选、货源匹配、严格结果、待核验、淘汰记录",
             "销量得分、评价数量、价格得分、稳定商品/配对 ID",
             "孤立图片、跨行图片",
         ]:
