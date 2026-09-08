@@ -103,7 +103,7 @@ class SkillContractTests(unittest.TestCase):
         ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
         for phrase in [
-            "v1.2.1",
+            "v1.3.0",
             "多产品",
             "目标产品ID",
             "固定九表",
@@ -247,6 +247,32 @@ class SkillContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(
             "https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.1",
+            readme,
+        )
+
+    def test_v130_release_notes_document_multi_agent_orchestration(self):
+        release = ROOT / "docs" / "releases" / "v1.3.0.md"
+        self.assertTrue(release.is_file(), "缺少 v1.3.0 中文发布说明")
+        text = release.read_text(encoding="utf-8")
+        for phrase in [
+            "## 新增",
+            "## 行为变化",
+            "## 边界",
+            "## 兼容性",
+            "## 安装",
+            "## 验证",
+            "多 Agent",
+            "独立复核",
+            "只有主协调者可以写最终 Excel",
+            "validate_orchestration.py",
+            "单 Agent 降级",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.3.0/skills/cross-market-product-selection",
+        ]:
+            self.assertIn(phrase, text)
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.3.0",
             readme,
         )
 

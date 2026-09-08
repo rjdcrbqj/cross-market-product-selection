@@ -4,20 +4,27 @@
 
 一个任务可以同时录入多个目标产品。每个产品拥有独立`目标产品ID`、参考图、必需视图、外观/功能合同、目标售价/成本、价格基准和目标数量；检索、去重、评分、排名与 Top-N 均按目标产品隔离，不会把不同产品混成一个池。
 
-当前稳定版本：[`v1.2.1`](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.1)。
+当前稳定版本：[`v1.3.0`](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.3.0)。
 
-v1.2.1 针对实际使用中出现的需求漂移和浅层检索问题，增加检索前需求基线、真实参考图找相似、逐页新增/断点、逐图核验和商品/供应商分层计数。它仍是多产品通用 Skill，不写死某个型号、形状或价格，也不把增加页数等同于找到足额合格工厂。
+v1.3.0 在 v1.2.1 的需求防漂移和深页检索能力上，新增通用多 Agent 协同编排：按目标产品、平台和阶段动态拆分商品发现、视觉功能、市场数据、供应商报价及独立复核，并由主协调者统一合并。它不固定品类或 Agent 数量，不能运行子 Agent 时会明确降级为单 Agent。
 
 ## 安装与调用
 
-在 Codex 中新建任务，复制下面的内容安装固定的 v1.2.1：
+在 Codex 中新建任务，复制下面的内容安装固定的 v1.3.0：
+
+```text
+请使用 $skill-installer 安装这个 Skill：
+https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.3.0/skills/cross-market-product-selection
+```
+
+需要复现旧行为时，仍可安装历史版本 v1.2.1、v1.2.0、v1.1.1、v1.1.0 或 v1.0.0：
+
+v1.2.1 的改进与兼容性说明仍可在[历史 Release 页面](https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.1)查看。
 
 ```text
 请使用 $skill-installer 安装这个 Skill：
 https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.1/skills/cross-market-product-selection
 ```
-
-需要复现旧行为时，仍可安装历史版本 v1.2.0、v1.1.1、v1.1.0 或 v1.0.0：
 
 ```text
 请使用 $skill-installer 安装这个 Skill：
@@ -50,7 +57,7 @@ https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cros
 
 ## 开始前需要确认什么
 
-本地开发中的协同封装增加了[多 Agent 编排](skills/cross-market-product-selection/references/多Agent协同编排.md)：商品发现、视觉功能、市场数据、供应商报价、独立红队及统一合并。完整角色任务说明、运行清单和校验器随 Skill 携带；当前已发布稳定版仍为上方 v1.2.1，这部分尚未发布。
+v1.3.0 增加了[多 Agent 编排](skills/cross-market-product-selection/references/多Agent协同编排.md)：商品发现、视觉功能、市场数据、供应商报价、独立红队及统一合并。完整角色任务说明、运行清单和校验器随 Skill 携带。
 
 在产品需求后加上“请使用 Skill 内置的多 Agent 协同编排”，即可要求主协调者实际调用当前环境提供的子 Agent。角色按产品和市场分批调度，只有主协调者写最终 Excel；子 Agent 工具不可用时明确采用单 Agent 执行。安装 Skill 不会修改全局或项目 Agent 配置，也不绑定原项目路径。
 
@@ -161,8 +168,8 @@ Amazon价格不得低于当前目标产品的合格同类均价；1688必须绑�
 
 ## 版本
 
-- 稳定版：[v1.2.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.1/skills/cross-market-product-selection)
-- 历史稳定版：[v1.2.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection)、[v1.1.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection)
+- 稳定版：[v1.3.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.3.0/skills/cross-market-product-selection)
+- 历史稳定版：[v1.2.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.1/skills/cross-market-product-selection)、[v1.2.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection)、[v1.1.1](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.1/skills/cross-market-product-selection)
 - 更早版本：[v1.1.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.1.0/skills/cross-market-product-selection)、[v1.0.0](https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.0.0/skills/cross-market-product-selection)
 - 最新开发版：[main](https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cross-market-product-selection)
 - 许可协议：[MIT License](LICENSE)
