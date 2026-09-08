@@ -50,6 +50,10 @@ https://github.com/rjdcrbqj/cross-market-product-selection/tree/main/skills/cros
 
 ## 开始前需要确认什么
 
+本地开发中的协同封装增加了[多 Agent 编排](skills/cross-market-product-selection/references/多Agent协同编排.md)：商品发现、视觉功能、市场数据、供应商报价、独立红队及统一合并。完整角色任务说明、运行清单和校验器随 Skill 携带；当前已发布稳定版仍为上方 v1.2.1，这部分尚未发布。
+
+在产品需求后加上“请使用 Skill 内置的多 Agent 协同编排”，即可要求主协调者实际调用当前环境提供的子 Agent。角色按产品和市场分批调度，只有主协调者写最终 Excel；子 Agent 工具不可用时明确采用单 Agent 执行。安装 Skill 不会修改全局或项目 Agent 配置，也不绑定原项目路径。
+
 正式批量检索前，先确认目标产品外观及下列会改变筛选结论的信息；资料不全时可以做少量探索，但不能直接给出“严格合格”名单。
 
 | 需要确认的内容 | 说明 |
@@ -133,6 +137,7 @@ Amazon价格不得低于当前目标产品的合格同类均价；1688必须绑�
 - `assets/通用选品数据库模板.xlsx`：中文九表多产品模板；
 - `scripts/scoring.py`：固定 4:4:2 评分公式；
 - `scripts/validate_workbook.py`：检查中文表头、严格结果、图片、链接、评分和供应商证据。
+- `scripts/validate_orchestration.py`：多 Agent 任务的依赖、输出占用、冻结需求和独立复核就绪校验；不代替真实分派和证据复核。
 - `tools/maintain_selection_template.mjs`：仅供仓库维护者用 `@oai/artifact-tool` 重建模板，不是 Skill 运行依赖。
 
 ## 项目结构
@@ -147,6 +152,7 @@ Amazon价格不得低于当前目标产品的合格同类均价；1688必须绑�
 │   ├── references/             # 中文任务确认、证据、Amazon、1688、联合与 SerpApi 规则
 │   └── scripts/
 │       ├── scoring.py
+│       ├── validate_orchestration.py
 │       └── validate_workbook.py
 ├── tests/                      # 评分、文档、模板与校验器测试
 ├── tools/maintain_selection_template.mjs  # 仅用于维护模板资产
