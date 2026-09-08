@@ -97,13 +97,13 @@ class SkillContractTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, excel)
 
-    def test_readme_and_ui_explain_v120_behavior(self):
+    def test_readme_and_ui_explain_current_multi_product_behavior(self):
         root = SKILL_DIR.parents[1]
         readme = (root / "README.md").read_text(encoding="utf-8")
         ui = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
         for phrase in [
-            "v1.2.0",
+            "v1.2.1",
             "多产品",
             "目标产品ID",
             "固定九表",
@@ -223,11 +223,30 @@ class SkillContractTests(unittest.TestCase):
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(
-            "https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.0",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection",
             readme,
         )
+
+    def test_v121_release_notes_document_requirement_and_discovery_fix(self):
+        release = ROOT / "docs" / "releases" / "v1.2.1.md"
+        self.assertTrue(release.is_file(), "缺少 v1.2.1 中文发布说明")
+        text = release.read_text(encoding="utf-8")
+        for phrase in [
+            "需求基线",
+            "真实参考图",
+            "逐图核验",
+            "供应商主体",
+            "--requirements requirements.json",
+            "## 兼容性",
+            "## 安装",
+            "## 验证",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.1/skills/cross-market-product-selection",
+        ]:
+            self.assertIn(phrase, text)
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(
-            "https://github.com/rjdcrbqj/cross-market-product-selection/tree/v1.2.0/skills/cross-market-product-selection",
+            "https://github.com/rjdcrbqj/cross-market-product-selection/releases/tag/v1.2.1",
             readme,
         )
 

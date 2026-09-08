@@ -25,6 +25,7 @@ export const SUPPLY_HEADERS = [
   "1688评价星级", "1688评价数量", "1688销量得分", "1688价格得分", "1688评价得分", "1688产品总评分",
   "生产能力证据", "ODM/OEM/定制证据", "核心通过证据", "来源类型", "来源链接", "检索路径", "获取时间",
   "置信度", "冲突说明", "决策日志引用",
+  "搜索参考价", "报价口径", "补证据动作",
 ];
 
 export const MATCH_HEADERS = [
@@ -36,6 +37,7 @@ export const MATCH_HEADERS = [
   "供应能力得分", "供应能力结论", "供应能力证据", "匹配质量得分", "匹配质量结论", "匹配质量证据",
   "最终配对得分", "生产能力证据", "ODM/OEM/定制证据", "主要限制", "来源类型", "来源链接", "检索路径",
   "获取时间", "置信度", "冲突说明", "决策日志引用",
+  "搜索参考价", "报价口径", "补证据动作",
 ];
 
 export const STRICT_HEADERS = [
@@ -73,6 +75,7 @@ const PENDING_HEADERS = [
   "状态", "模式", "目标产品ID", "记录/配对ID", "平台", "商品图片", "Amazon ASIN", "1688商品ID", "标题/配对说明",
   "缺失或冲突门槛", "现有证据", "补证据动作", "Amazon链接", "1688链接", "主图链接", "证据链接",
   "用户保留决定", "决策日志引用", "更新时间",
+  "Amazon实际售价", "实际单价", "成本币种", "搜索参考价", "报价口径", "外观门槛", "价格/MOQ门槛", "供应商门槛",
 ];
 
 const REJECTED_HEADERS = [
@@ -363,7 +366,7 @@ export async function buildTemplate(outputPath) {
   });
   buildDataSheet(workbook, {
     name: "1688候选", title: "1688候选",
-    description: "按目标产品 ID 核验商品与工厂；已知单价越过目标成本带即淘汰，严格行必须绑定 SKU、采购档位、MOQ和阶梯价。",
+    description: "按目标产品 ID 核验商品与工厂；搜索参考价与确认 SKU 单价分开。未知主体写补查动作；严格行绑定 SKU、采购档位、MOQ和阶梯价。",
     allowedStatuses: ["严格合格", "待核验"],
     headers: SUPPLY_HEADERS, tableName: "SupplyCandidatesTable", formulas: platformFormulas(SUPPLY_HEADERS, "1688"),
   });
@@ -382,7 +385,7 @@ export async function buildTemplate(outputPath) {
   });
   buildDataSheet(workbook, {
     name: "待核验", title: "待核验",
-    description: "没有明确失败但缺少可靠硬门槛或评分原始证据的记录放在这里；写清缺口、现有证据与补证据动作。",
+    description: "保留缺证但未明确失败的商品；搜索参考价不得当实际单价，已知价格与门槛不得因转入本表丢失；写清补证据动作。",
     allowedStatuses: ["待核验"],
     headers: PENDING_HEADERS, tableName: "PendingAuditTable",
   });

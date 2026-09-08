@@ -905,8 +905,8 @@ def _validate_candidate_row(row: RowRecord) -> list[ValidationIssue]:
             issues.append(_issue("CANDIDATE_IMAGE_MISSING", "1688 候选行必须嵌入与同一商品/SKU 对应的实际图片", row))
         if not _has_specific_main_image_url(row, "1688"):
             issues.append(_issue("CANDIDATE_IMAGE_URL_MISSING", "1688 候选行必须保留同一商品的主图 URL", row))
-        if not _has_platform_product_url(row, "1688") or not _has_supplier_profile(row):
-            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "1688 候选行必须保留商品 URL 和供应商主页", row))
+        if not _has_platform_product_url(row, "1688"):
+            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "1688 候选行必须保留商品 URL", row))
     elif row.sheet == "货源匹配":
         if not _has_amazon_image(row, allow_generic=False) or not _has_1688_image(row, allow_generic=False):
             issues.append(_issue("CANDIDATE_IMAGE_MISSING", "货源匹配候选行必须分别嵌入 Amazon 与 1688 两侧的实际商品图片", row))
@@ -915,9 +915,17 @@ def _validate_candidate_row(row: RowRecord) -> list[ValidationIssue]:
         if (
             not _has_platform_product_url(row, "amazon")
             or not _has_platform_product_url(row, "1688")
-            or not _has_supplier_profile(row)
         ):
-            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "货源匹配候选行必须保留两侧商品 URL 和供应商主页", row))
+            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "货源匹配候选行必须保留两侧商品 URL", row))
+    if row.sheet in {"1688候选", "货源匹配"} and not _has_supplier_profile(row):
+        if status == "严格合格":
+            issues.append(_issue("CANDIDATE_PRODUCT_URL_MISSING", "严格供应商必须有可核验的供应商主页", row))
+        elif (
+            _values_for(row, ("供应商门槛",)) != "待核验"
+            or _blank(_values_for(row, ("缺失或冲突门槛", "门槛原因")))
+            or _blank(_values_for(row, ("补证据动作",)))
+        ):
+            issues.append(_issue("PENDING_SUPPLIER_FOLLOWUP_MISSING", "缺供应商主页的商品线索须标注供应商待核验、缺口和具体补查动作；不能算作工厂", row))
     return issues
 
 
@@ -1321,7 +1329,7 @@ def _validate_multi_product_prices(
         return []
     issues: list[ValidationIssue] = []
     for row in model.rows:
-        if row.sheet not in CANDIDATE_SHEETS | {"严格结果"} or _row_is_blank(row):
+        if row.sheet not in CANDIDATE_SHEETS | {"严格结果", "待核验"} or _row_is_blank(row):
             continue
         if _row_status(row) not in {"严格合格", "待核验"}:
             continue
@@ -1548,16 +1556,18 @@ def _validate_visual_evidence_duplicates(
     profiles: dict[str, RowRecord],
 ) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    seen: dict[tuple[str, str], RowRecord] = {}
+    seen: dict[tuple[str, str, str], RowRecord] = {}
     for row in rows:
         target_id = _target_product_id(row)
         profile = profiles.get(target_id or "")
-        if profile is None or str(_values_for(profile, ("视觉对标模式",)) or "").strip() != "严格多视图":
+        if profile is None:
             continue
         evidence = _values_for(row, ("外观逐项核验",))
         if _blank(evidence):
             continue
-        key = (target_id or "", _normalize_header(str(evidence)))
+        # The same item may be shown in candidate and result sheets. Within a
+        # sheet, single-view claims need item-specific evidence just as multi-view claims do.
+        key = (row.sheet, target_id or "", _normalize_header(str(evidence)))
         if key in seen:
             issues.append(_issue("STRICT_VISUAL_EVIDENCE_DUPLICATE", "同一目标产品的不同候选不能复制完全相同的外观核验证据", row))
         else:
@@ -2212,6 +2222,10 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
             )
         if row.sheet in CANDIDATE_SHEETS:
             issues.extend(_validate_candidate_row(row))
+        elif row.sheet == "待核验":
+            gate_values = (value for header, value in row.values.items() if "门槛" in _normalize_header(header))
+            if any(_gate_explicitly_failed(value) for value in gate_values):
+                issues.append(_issue("CANDIDATE_FAILED_GATE", "待核验行已有明确失败门槛，必须移入淘汰记录", row))
 
     data_rows = [row for row in model.rows if row.sheet not in CONTROL_SHEETS and not _row_is_blank(row)]
     strict_rows = [row for row in data_rows if row.sheet == "严格结果"]
@@ -2294,7 +2308,7 @@ def validate_workbook_model(model: WorkbookModel) -> list[ValidationIssue]:
             issues.extend(_validate_strict_price_range(row, effective_mode, tolerances, model.task_fields))
 
     if _multi_product_enabled(model):
-        issues.extend(_validate_visual_evidence_duplicates(strict_rows, profiles))
+        issues.extend(_validate_visual_evidence_duplicates(strict_state_rows, profiles))
         issues.extend(_validate_strict_result_limits(strict_rows, profiles))
 
     seen_record_ids: dict[str, RowRecord] = {}
@@ -2984,16 +2998,98 @@ def extract_workbook_model(path: str | Path) -> WorkbookModel:
     )
 
 
+FROZEN_COMMON_FIELDS = frozenset({
+    "目标产品名称", "用户确认状态", "视觉对标模式", "参考图1链接", "参考图2链接",
+    "必需视图", "外观必须特点", "允许变化", "外观排除项", "必须功能", "可选功能",
+    "排除功能", "目标严格合格数量",
+})
+FROZEN_PLATFORM_FIELDS = {
+    "amazon": frozenset({"Amazon目标售价", "Amazon价格允许偏差", "Amazon目标站点", "Amazon目标币种", "Amazon同类均价最低样本数"}),
+    "1688": frozenset({"1688目标成本", "1688价格允许偏差", "1688成本币种", "采购数量档位"}),
+}
+
+
+def validate_requirement_baseline(model: WorkbookModel, baseline: Any) -> list[ValidationIssue]:
+    """Compare output contracts with a separately saved, pre-search requirement card.
+
+    This detects drift, not the truth of a quoted confirmation or visual claims.
+    A human/agent must still review the original request and actual images.
+    """
+    if baseline is None:
+        return [_issue("REQUIREMENTS_BASELINE_MISSING", "正式交付须提供检索前冻结的需求基线；不能从结果表倒生成", sheet="目标产品")]
+    if not isinstance(baseline, dict) or baseline.get("版本") != 1:
+        return [_issue("REQUIREMENTS_BASELINE_INVALID", "需求基线须为版本 1 的 JSON 对象", sheet="目标产品")]
+    targets = baseline.get("目标产品")
+    baseline_mode = _normalized_mode(baseline.get("模式"))
+    if not isinstance(targets, list) or not targets or baseline_mode is None:
+        return [_issue("REQUIREMENTS_BASELINE_INVALID", "需求基线缺少有效模式或目标产品列表", sheet="目标产品")]
+    issues: list[ValidationIssue] = []
+    workbook_mode = _normalized_mode(_task_value(model.task_fields, "模式") or model.mode)
+    if baseline_mode != workbook_mode:
+        issues.append(_issue("REQUIREMENT_DRIFT", "工作簿模式偏离冻结需求", sheet="任务说明"))
+    sides = ("amazon", "1688") if baseline_mode == "joint" else (baseline_mode,)
+    required = set(FROZEN_COMMON_FIELDS)
+    for side in sides:
+        required.update(FROZEN_PLATFORM_FIELDS[side])
+    permitted = set(FROZEN_COMMON_FIELDS).union(*FROZEN_PLATFORM_FIELDS.values())
+    profiles, _ = _target_profiles(model)
+    seen: set[str] = set()
+
+    def normalized(value: Any) -> Any:
+        return None if _blank(value) else value.strip() if isinstance(value, str) else value
+
+    for item in targets:
+        if not isinstance(item, dict):
+            issues.append(_issue("REQUIREMENTS_BASELINE_INVALID", "目标产品基线项必须是对象", sheet="目标产品"))
+            continue
+        raw_target_id = item.get("目标产品ID")
+        target_id = _normalize_header(raw_target_id) if isinstance(raw_target_id, str) else None
+        frozen = item.get("冻结字段")
+        if (
+            not isinstance(target_id, str) or not target_id.strip() or target_id in seen
+            or not isinstance(frozen, dict) or not required <= frozen.keys()
+            or not frozen.keys() <= permitted
+            or not isinstance(item.get("需求来源"), str) or not item["需求来源"].strip()
+            or not isinstance(item.get("用户原文"), str) or not item["用户原文"].strip()
+        ):
+            issues.append(_issue("REQUIREMENTS_BASELINE_INVALID", "每个目标须有唯一 ID、原始需求出处/原文及完整冻结字段；均价是计算结果，不得冻结", sheet="目标产品"))
+            continue
+        seen.add(target_id)
+        profile = profiles.get(target_id)
+        if profile is None:
+            continue
+        for field, expected in frozen.items():
+            actual = _values_for(profile, (field,))
+            if normalized(actual) != normalized(expected):
+                issues.append(_issue("REQUIREMENT_DRIFT", f"{target_id} 的 {field} 偏离检索前冻结值；须恢复要求或取得用户明确变更", profile))
+    if seen != set(profiles):
+        issues.append(_issue("REQUIREMENT_TARGET_SET_MISMATCH", "工作簿与需求基线的目标产品集合不一致", sheet="目标产品"))
+    return issues
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="校验通用选品 Excel 工作簿")
     parser.add_argument("workbook", type=Path)
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--requirements", type=Path, help="检索前冻结的需求基线 JSON；正式交付必需")
+    scope.add_argument("--audit-only", action="store_true", help="仅检查旧表内部一致性，不代表选品交付验收")
     args = parser.parse_args(argv)
+    has_business_data = False
     try:
         model = extract_workbook_model(args.workbook)
         issues = validate_workbook_model(model)
+        has_business_data = any(row.sheet in BUSINESS_SHEETS and not _row_is_blank(row) for row in model.rows)
+        if not args.audit_only and (has_business_data or args.requirements):
+            baseline = json.loads(args.requirements.read_text(encoding="utf-8-sig")) if args.requirements else None
+            issues.extend(validate_requirement_baseline(model, baseline))
     except (BadZipFile, ElementTree.ParseError, KeyError, OSError, ValueError) as error:
         issues = [ValidationIssue("WORKBOOK_READ_ERROR", f"无法读取工作簿：{error}")]
     payload = {"ok": not issues, "issues": [issue.__dict__ for issue in issues]}
+    if has_business_data or args.audit_only or args.requirements:
+        payload.update({
+            "check_scope": "内部一致性审计" if args.audit_only or not args.requirements else "冻结需求与内部一致性校验",
+            "requires_visual_review": True,
+        })
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
